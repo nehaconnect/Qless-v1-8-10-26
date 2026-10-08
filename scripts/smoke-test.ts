@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-const BASE_URL = 'http://localhost:3000';
+const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 
 async function runSmokeTest() {
   console.log('🚀 ========================================================');
@@ -83,6 +83,9 @@ async function runSmokeTest() {
     }),
   });
   const orderData = await orderRes.json();
+  if (!orderRes.ok || !orderData.order) {
+    console.error('Order creation error response:', orderRes.status, orderData);
+  }
   assertTest(orderRes.ok && orderData.success && orderData.order?.status === 'REQUESTED', `Order #${orderData.order?.orderNumber} created with status REQUESTED`);
   assertTest(Boolean(orderData.pickupCode) && orderData.pickupCode.length === 4, `Secure 4-character pickup code received: [${orderData.pickupCode}]`);
 
