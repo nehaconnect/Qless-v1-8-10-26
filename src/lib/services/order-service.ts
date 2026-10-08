@@ -1,5 +1,5 @@
 import { db, orders, orderItems, orderStatusHistory, pickupBatches, pickupCodes, menuItems, canteens, notifications, auditLogs, payments } from '@/lib/db';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, sql, inArray } from 'drizzle-orm';
 import crypto from 'crypto';
 
 // 4-character uppercase alphanumeric character set (excluding confusing characters like 0, O, 1, I)
@@ -59,20 +59,21 @@ export function getBatchWindow(pickupDate: Date): {
   // Extract authoritative IST representation
   const { hours, minutes, dateStr } = getISTDateParts(pickupDate);
   
-  const batchStartMin = Math.floor(minutes / 15) * 15;
-  const batchEndMin = batchStartMin === 45 ? 0 : batchStartMin + 15;
-  const batchEndHour = batchStartMin === 45 ? hours + 1 : hours;
+  let batchStartMin = Math.floor(minutes / 15) * 15;
+  let batchEndMin = batchStartMin === 45 ? 0 : batchStartMin + 15;
+  let batchEndHour = batchStartMin === 45 ? hours + 1 : hours;
+  let effectiveHours = hours;
 
-  const startTime = `${pad(hours)}:${pad(batchStartMin)}:00`;
+  if (hours === 17 && minutes === 0) {
+    effectiveHours = 16;
+    batchStartMin = 45;
+    batchEndMin = 0;
+    batchEndHour = 17;
+  }
+
+  const startTime = `${pad(effectiveHours)}:${pad(batchStartMin)}:00`;
   const endTime = `${pad(batchEndHour)}:${pad(batchEndMin)}:00`;
-
-  const formatAmPm = (h: number, m: number) => {
-    const ampm = h >= 12 ? 'PM' : 'AM';
-    const displayH = h % 12 === 0 ? 12 : h % 12;
-    return `${displayH}:${pad(m)} ${ampm}`;
-  };
-
-  const displayLabel = `${formatAmPm(hours, batchStartMin)}–${formatAmPm(batchEndHour, batchEndMin)}`;
+  const displayLabel = `${pad(effectiveHours)}:${pad(batchStartMin)}–${pad(batchEndHour)}:${pad(batchEndMin)}`;
 
   return { startTime, endTime, displayLabel, batchDate: dateStr };
 }
@@ -130,10 +131,11 @@ export async function createOrder(input: CreateOrderInput) {
     throw new Error('Canteen is currently busy. New orders are temporarily unavailable.');
   }
 
-  // Check operating hours (8 AM to 5 PM IST)
-  const { hours: pickupHour } = getISTDateParts(pickupDate);
-  if (pickupHour < 8 || pickupHour >= 17) {
-    throw new Error('Requested pickup time must be within canteen operating hours (8:00 AM - 5:00 PM)');
+  // Check operating hours (08:00 to 17:00 IST)
+  const { hours: pickupHour, minutes: pickupMin } = getISTDateParts(pickupDate);
+  const totalMinutes = pickupHour * 60 + pickupMin;
+  if (totalMinutes < 480 || totalMinutes > 1020) {
+    throw new Error('Requested pickup time must be within canteen operating hours (08:00 to 17:00)');
   }
 
   // 2. Fetch Authoritative Menu Prices Server-Side
@@ -344,6 +346,61 @@ export async function sellerAcceptOrder(orderId: string, sellerUserId: string, s
   });
 
   return updated;
+}
+
+/**
+ * Seller rejects incoming customer order request
+ */
+export async function sellerRejectOrder(orderId: string, sellerUserId: string, reason?: string, sellerCanteenId?: string) {
+  const order = await db.query.orders.findFirst({
+    where: eq(orders.id, orderId)
+  });
+
+  if (!order) throw new Error('Order not found');
+  if (sellerCanteenId && order.canteenId !== sellerCanteenId) {
+    throw new Error('Forbidden: Cannot reject order for another canteen');
+  }
+
+  if (order.status !== 'REQUESTED' && order.status !== 'ACCEPTED') {
+    throw new Error(`Cannot reject order in ${order.status} state`);
+  }
+
+  return await db.transaction(async (tx) => {
+    // Release batch capacity reservation if assigned
+    if (order.batchId) {
+      await tx.execute(sql`
+        UPDATE pickup_batches SET reserved_count = GREATEST(0, reserved_count - 1) WHERE id = ${order.batchId}
+      `);
+    }
+
+    const [updated] = await tx.update(orders)
+      .set({
+        status: 'REJECTED',
+        rejectionReason: reason || 'SELLER_DECLINED',
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+      .returning();
+
+    await tx.insert(orderStatusHistory).values({
+      orderId,
+      fromStatus: order.status,
+      toStatus: 'REJECTED',
+      changedByUserId: sellerUserId,
+      actorRole: 'SELLER',
+      reason: reason || 'Seller rejected the order request',
+    });
+
+    await tx.insert(notifications).values({
+      userId: order.customerId,
+      orderId,
+      title: 'Order Declined',
+      message: `Your order #${order.orderNumber} was declined by the canteen.`,
+      type: 'ORDER_REJECTED',
+    });
+
+    return updated;
+  });
 }
 
 /**
@@ -572,6 +629,53 @@ export async function sellerStartPreparingBatch(batchId: string, sellerUserId: s
         title: 'Preparation Started',
         message: 'The kitchen has started cooking your order!',
         type: 'PREPARING',
+      });
+    }
+
+    return { count: batchOrders.length };
+  });
+}
+
+/**
+ * Seller marks an entire batch READY
+ */
+export async function sellerMarkBatchReady(batchId: string, sellerUserId: string, sellerCanteenId?: string) {
+  const batch = await db.query.pickupBatches.findFirst({
+    where: eq(pickupBatches.id, batchId)
+  });
+  if (!batch) throw new Error('Batch not found');
+  if (sellerCanteenId && batch.canteenId !== sellerCanteenId) {
+    throw new Error('Forbidden: Cannot update batch for another canteen');
+  }
+
+  return await db.transaction(async (tx) => {
+    await tx.update(pickupBatches)
+      .set({ status: 'READY', readyAt: new Date() })
+      .where(eq(pickupBatches.id, batchId));
+
+    const batchOrders = await tx.select().from(orders)
+      .where(and(eq(orders.batchId, batchId), inArray(orders.status, ['CONFIRMED', 'PREPARING'])));
+
+    for (const ord of batchOrders) {
+      await tx.update(orders)
+        .set({ status: 'READY', readyAt: new Date(), updatedAt: new Date() })
+        .where(eq(orders.id, ord.id));
+
+      await tx.insert(orderStatusHistory).values({
+        orderId: ord.id,
+        fromStatus: ord.status,
+        toStatus: 'READY',
+        changedByUserId: sellerUserId,
+        actorRole: 'SELLER',
+        reason: 'Entire batch marked READY for pickup',
+      });
+
+      await tx.insert(notifications).values({
+        userId: ord.customerId,
+        orderId: ord.id,
+        title: 'Order Ready for Pickup!',
+        message: `Order #${ord.orderNumber} is ready at the counter!`,
+        type: 'ORDER_READY',
       });
     }
 

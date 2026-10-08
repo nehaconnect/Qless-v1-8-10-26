@@ -92,10 +92,26 @@ export const auth = betterAuth({
                 collegeId: defaultCollege.id,
                 defaultCanteenId: defaultCanteen?.id,
               }).onConflictDoNothing();
-            } else if (createdUser.role === 'SELLER' && defaultCanteen) {
+            } else if (createdUser.role === 'SELLER' && defaultCollege) {
+              // Ensure complete seller data isolation: create a dedicated, empty canteen workspace
+              const cleanName = (createdUser.name || 'Seller').trim();
+              const canteenName = cleanName.toLowerCase().endsWith('canteen')
+                ? cleanName
+                : `${cleanName}'s Canteen`;
+              const [newCanteen] = await db.insert(schema.canteens).values({
+                collegeId: defaultCollege.id,
+                name: canteenName,
+                location: 'Campus Food Court',
+                operatingStatus: 'OPEN',
+                openingTime: '08:00:00',
+                closingTime: '17:00:00',
+                defaultBatchCapacity: 10,
+                isActive: true,
+              }).returning();
+
               await db.insert(schema.sellerProfiles).values({
                 userId: createdUser.id,
-                canteenId: defaultCanteen.id,
+                canteenId: newCanteen.id,
                 approvalStatus: 'PENDING_APPROVAL',
               }).onConflictDoNothing();
             }

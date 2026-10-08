@@ -21,6 +21,7 @@ export async function POST(
 
     return NextResponse.json({ success: true, order: result.order });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 400 });
+    const isForbidden = err.message?.includes('Forbidden');
+    return NextResponse.json({ error: err.message }, { status: isForbidden ? 403 : 400 });
   }
 }

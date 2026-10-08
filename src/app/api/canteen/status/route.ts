@@ -5,12 +5,26 @@ import { getSessionUser, requireSeller } from '@/lib/auth/server';
 
 export async function GET(req: NextRequest) {
   try {
+    const authUser = await getSessionUser();
     const { searchParams } = new URL(req.url);
     const canteenId = searchParams.get('canteenId');
+    let targetCanteenId: string | null = canteenId;
+    if (!targetCanteenId) {
+      if (authUser?.role === 'SELLER' && authUser.canteenId) {
+        targetCanteenId = authUser.canteenId;
+      } else {
+        const defaultCanteen = await db.query.canteens.findFirst({ where: eq(canteens.name, 'IP Canteen') });
+        targetCanteenId = defaultCanteen?.id ?? null;
+      }
+    }
 
-    const canteen = canteenId
-      ? await db.query.canteens.findFirst({ where: eq(canteens.id, canteenId) })
-      : await db.query.canteens.findFirst({ where: eq(canteens.name, 'IP Canteen') });
+    if (!targetCanteenId) {
+      return NextResponse.json({ error: 'Canteen not found' }, { status: 404 });
+    }
+
+    const canteen = await db.query.canteens.findFirst({
+      where: eq(canteens.id, targetCanteenId)
+    });
 
     if (!canteen) {
       return NextResponse.json({ error: 'Canteen not found' }, { status: 404 });

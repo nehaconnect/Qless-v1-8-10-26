@@ -1,107 +1,123 @@
-# QLess — Real Campus Canteen Ordering Platform
+# QLess — Real-Time Campus Canteen Ordering & Operations Platform
 
-**QLess** is a high-performance, real-time campus canteen ordering and queue-elimination platform built specifically for **Indraprastha College for Women (IPCW)** — **IP Canteen**.
+**QLess** is a high-performance, real-time campus canteen ordering, batch preparation, and queue-elimination platform built for educational institutions with multi-seller isolation, 15-minute preparation batches, and exact pickup time management.
 
 ---
 
 ## 🚀 Key Architectural Highlights
 
-1. **Exact Requested Pickup Times & Continuous 15-Minute Preparation Batches**
-   - Customers specify their exact requested pickup time to the minute (e.g. `11:07 AM`).
-   - The platform automatically aligns the order with the correct continuous 15-minute batch window (`11:00 AM - 11:15 AM`).
-   - Batches run continuously from canteen opening to closing (`08:00 AM` to `05:00 PM` IST).
+### 1. Multi-Seller Workspace & Server-Side Data Isolation (Critical)
+- **Multi-Canteen Architecture**: Every seller operates within their own isolated canteen workspace.
+- **Seeded Testing Seller vs. Fresh Workspaces**:
+  - `slr/soman_singh`: The primary test seller account seeded with IP Canteen's operational workspace (8 menu items, batch history, order queue).
+  - `slr/zumi_nil` (and any newly registered/approved seller): Receives a **100% fresh, pristine, empty workspace** with 0 menu items, 0 categories, 0 orders, 0 batches, and 0 operational history.
+- **Strict Server-Side BOLA / IDOR Protection**:
+  - Every API mutation and query validates `session → seller profile → canteen ownership → requested resource`.
+  - Seller A cannot view, edit, accept, or verify Seller B's menu, orders, batches, pickup codes, or settings (enforced with HTTP 403 Forbidden).
+  - Validated by the automated test suite (`npm run test:isolation`).
 
-2. **Atomic Batch Capacity & Concurrency Protection**
-   - Each 15-minute batch has an enforceable maximum preparation capacity (`capacity = 30` default).
-   - Capacity reservations use strict PostgreSQL row-level locks:
-     ```sql
-     UPDATE pickup_batches
-     SET reserved_count = reserved_count + 1
-     WHERE id = $id AND reserved_count < capacity
-     RETURNING *;
-     ```
-   - Eliminates race conditions, ensuring zero batch overbooking under high traffic.
+### 2. Exact Requested Pickup Times & 15-Minute Continuous Preparation Batches
+- **Strict 24-Hour Operating Format**: **08:00 to 17:00** everywhere (NO AM/PM format anywhere in the UI or backend).
+- **Exact Customer Time**: Stored separately from the preparation batch (e.g., requested `13:37` remains `13:37`).
+- **Continuous 15-Minute Batches**: Batches group prep load (`08:00–08:15`, `08:15–08:30`, ..., `16:45–17:00`).
+- **Batch Container UI**: Sellers see clear visual hierarchy—container boxes displaying aggregate item preparation counts (`3 × Masala Dosa`, `4 × Tea`) with individual order tickets nested inside.
+- **Atomic Concurrency Locks**: Batch reservation uses PostgreSQL conditional atomic updates to prevent overbooking under high traffic.
 
-3. **Zero Plaintext Pickup Code Storage & Brute-Force Shield**
-   - Plaintext 4-character alphanumeric pickup codes are **never** stored in the database.
-   - Only cryptographically salted SHA-256 hashes are persisted in `pickup_codes`.
-   - Built-in rate limiting: 5 failed verification attempts trigger a 3-minute lockout with audit log capture and seller/admin recovery path.
+### 3. Cryptographically Secure Pickup Verification Codes
+- **Generated ONLY After Verified Payment**: Plaintext pickup codes are never issued before payment confirmation.
+- **Zero Plaintext Storage**: The database persists only salted SHA-256 hashes (`pickup_codes` table).
+- **Format**: 4 uppercase alphanumeric characters generated via `crypto.randomBytes(4)`.
+- **Brute-Force Shield**: 5 consecutive failed attempts trigger a 3-minute lockout with audit logging and seller/admin recovery paths.
 
-4. **Server-Side Price Authority**
-   - Client prices are never trusted. All line item amounts, sub-totals, and grand totals are strictly calculated from active menu records within a database transaction.
+### 4. 5-Section Seller Operations Interface
+1. **Orders**: Incoming order requests with button-level loading states, Accept, Reject, and Suggest Time actions.
+2. **Preparation**: Active preparation batches with Start Preparing, Pause, and Resume controls.
+3. **Pickup**: Paid/confirmed orders ready for collection with prominent pickup code verification counter.
+4. **Menu**: Full item & category management (add, edit, archive, price, daily order limit, sold-out switch, today's menu toggle).
+5. **Account**: Seller username, assigned canteen, optional college email, and real server-side logout.
+- Responsive layout: Desktop fixed sidebar + Mobile bottom navigation bar.
 
-5. **Integrated Better Auth (Unified DB Tables)**
-   - Official Better Auth integration with `username` and `phoneNumber` plugins.
-   - Role enforcement via username prefixes:
-     - `ctr/` → Customer
-     - `slr/` → Canteen Seller
-     - `adm/` → Platform Administrator
-   - Unified single-schema database design (18 PostgreSQL tables).
-
-6. **Real-time SSE (Server-Sent Events)**
-   - Live queue updates, order status changes, and canteen operation status (`OPEN`, `TOO_BUSY`, `CLOSED`) stream directly to active clients without client-side polling.
-
-7. **Admin "View-As" Support Mode**
-   - Administrators can inspect the live customer or seller portals in real time.
-   - All actions retain the admin's underlying identity and are recorded in immutable audit logs (`audit_logs`).
+### 5. Preserved Customer Experience & Canteen Switcher
+- Customers browse **Today's Menu** and **Full Menu** across available campus canteens using a multi-canteen switcher.
+- Customer order flow: `REQUESTED` → `ACCEPTED` → `PAYMENT PENDING` → `CONFIRMED` → `PREPARING` → `READY` → `COLLECTED`.
+- Real-time updates via Server-Sent Events (SSE) + manual refresh fallback on all views.
 
 ---
 
-## 🛠️ Tech Stack
+## 🛠️ Tech Stack & Production Compatibility
 
 - **Framework**: Next.js 14 (App Router)
 - **Language**: TypeScript (Strict Mode)
-- **Database**: Neon Serverless PostgreSQL
+- **Database**: Neon Serverless PostgreSQL with optimized connection pooling
 - **ORM & Migrations**: Drizzle ORM (`drizzle-kit`)
-- **Authentication**: Better Auth (with username & phone number plugins)
-- **Real-time**: Server-Sent Events (SSE)
+- **Authentication**: Better Auth (with `username` and `phoneNumber` plugins)
+- **Real-Time**: Server-Sent Events (SSE) with heartbeat streaming
 - **Styling**: Tailwind CSS + Vanilla CSS tokens
 - **Icons**: Lucide React
-- **Payment Architecture**: Razorpay (Server-verified)
+- **Payment Architecture**: Razorpay (Server-verified webhook/signature model)
+- **Deployment Target**: Vercel Serverless (Zero local disk reliance, stateless architecture)
 
 ---
 
-## 📋 Default Seed Credentials (IPCW Canteen)
+## 📋 Test & Demo Accounts
 
-The database seed script sets up a ready-to-test environment for IPCW:
-
-| Role | Username | Password | Details |
+| Role | Username | Password | Workspace Details |
 |---|---|---|---|
-| **Admin** | `adm/admin_qless` | `password123` | Platform Administrator |
-| **Seller** | `slr/soman_singh` | `password123` | IP Canteen (Approved) |
-| **Customer** | `ctr/siya_sen` | `password123` | IPCW Student |
+| **Admin** | `adm/admin_qless` | `password123` | Platform Administrator (Global oversight, View-As) |
+| **Test Seller (Seeded)** | `slr/soman_singh` | `password123` | IP Canteen (8 items, existing orders & batches) |
+| **New Seller (Empty)** | `slr/zumi_nil` | `password123` | Zumi Canteen (100% fresh, 0 items, 0 orders) |
+| **Customer** | `ctr/siya_sen` | `password123` | IPCW Student Account |
 
 ---
 
-## 🏃 Quick Start
+## 🧪 Comprehensive Automated Test Suites
 
-### 1. Configure Environment
-Ensure `.env.local` contains your Neon PostgreSQL connection:
-```env
-DATABASE_URL=postgresql://user:password@ep-xyz.neon.tech/neondb?sslmode=require
-BETTER_AUTH_SECRET=your_32_char_secret_here
-BETTER_AUTH_URL=http://localhost:3000
+QLess includes automated verification suites covering all security, isolation, and lifecycle requirements:
+
+```bash
+# 1. Multi-Seller Isolation & BOLA/IDOR Security Tests (20 tests)
+npm run test:isolation
+
+# 2. Better Auth Registration, Username Validation & RBAC
+npm run test:auth
+
+# 3. Input Validation, Quantity Limits & BOLA Scoping (5 tests)
+npm run test:security
+
+# 4. Batch Mapping, Price Authority, Concurrency & Full Lifecycle (14 tests)
+npm run test:suite
+
+# 5. Live End-to-End Server Smoke Test (15 tests)
+npm run test:smoke
 ```
 
-### 2. Run Database Seeding
-To seed IPCW college, IP Canteen, menu categories, items, and today's continuous batches:
+---
+
+## 🏃 Quick Start (Local Development)
+
+### 1. Environment Setup
+Create `.env.local` based on `.env.example`:
+```env
+DATABASE_URL=postgresql://user:password@ep-sample-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require
+BETTER_AUTH_SECRET=your_32_character_secret_key_here
+BETTER_AUTH_URL=http://localhost:3000
+RAZORPAY_KEY_ID=rzp_test_sample_key_id
+RAZORPAY_KEY_SECRET=sample_razorpay_secret_key
+```
+
+### 2. Seed Database (Optional)
+To re-seed test accounts and IP Canteen:
 ```bash
 npm run seed
 ```
 
-### 3. Run Automated Verification Test Suite
-QLess includes a 14-point automated test suite validating batch mapping, price authority, pickup hash security, concurrency, and order lifecycles:
-```bash
-npm run test:suite
-```
-
-### 4. Run Development Server
+### 3. Run Development Server
 ```bash
 npm run dev
 ```
-Open [http://localhost:3000](http://localhost:3000) to access QLess.
+Open [http://localhost:3000](http://localhost:3000).
 
-### 5. Production Build
+### 4. Build for Production (Vercel)
 ```bash
 npm run build
 ```
@@ -110,30 +126,32 @@ npm run build
 
 ## 📊 Database Schema (18 Production Tables)
 
-- `colleges`: Multi-college platform support (default: IPCW).
-- `canteens`: Canteen operating status (`OPEN`, `TOO_BUSY`, `CLOSED`).
-- `user`: Better Auth users table with role & phone metadata.
-- `session`: Better Auth user sessions.
-- `account`: Better Auth credential accounts.
-- `verification`: Better Auth tokens and verification codes.
-- `customer_profiles`: Customer dietary preferences & college metadata.
-- `seller_profiles`: Canteen seller approval workflow & verification.
-- `menu_categories`: Menu organization (Snacks, Beverages, Meals).
-- `menu_items`: Menu catalog with pricing and soft-delete (`is_archived`).
-- `menu_item_availability`: Real-time sold-out toggles per canteen.
+- `colleges`: Multi-institution support (Indraprastha College for Women).
+- `canteens`: Canteen profiles with operating status (`OPEN`, `TOO_BUSY`, `CLOSED`) and operating hours (`08:00:00` to `17:00:00`).
+- `user`: Better Auth credentials and role categorization (`CUSTOMER`, `SELLER`, `ADMIN`).
+- `session`: User sessions.
+- `account`: Better Auth password and auth accounts.
+- `verification`: Tokens and codes.
+- `customer_profiles`: Dietary preferences and student metadata.
+- `seller_profiles`: Canteen affiliation, approval status, and timestamps.
+- `menu_categories`: Canteen-scoped menu categories.
+- `menu_items`: Items with price, order limits, vegetarian flags, and soft-delete archive.
+- `menu_item_availability`: Real-time sold-out states.
 - `pickup_batches`: 15-minute continuous preparation batch windows.
-- `orders`: Core order lifecycle records and requested pickup times.
-- `order_items`: Line items with server-snapshotted pricing.
+- `orders`: Orders with exact requested pickup time, assigned batch, and lifecycle status.
+- `order_items`: Line items with server-verified prices.
 - `order_status_history`: Granular chronological order event log.
-- `pickup_codes`: Salted SHA-256 pickup verification codes.
-- `payments`: Razorpay transaction logs and status tracking.
+- `pickup_codes`: Salted SHA-256 pickup verification codes (zero plaintext).
+- `payments`: Server-verified payment transactions.
 - `audit_logs`: Immutable security and administrative audit trail.
 
 ---
 
-## 🛡️ Security Guarantees
+## 🛡️ Security & Privacy Guarantees
 
-- **Zero Plaintext Secrets**: Secrets and database connection strings are never exposed client-side.
-- **Zero Plaintext Pickup Codes**: Stored strictly as salted SHA-256 hashes.
-- **Role Validation**: All mutations verify active session role and canteen affiliation.
-- **Zero In-Memory Fallbacks**: Neon PostgreSQL is the single source of truth.
+- **Server-Side Authorization**: Every endpoint verifies session role and canteen ownership.
+- **Zero Plaintext Secrets / Codes**: Codes are hashed with unique 16-byte cryptographically secure salts.
+- **Server Price Authority**: Client-sent prices are discarded; totals are calculated from active DB records.
+- **Customer Privacy**: Customer A cannot see Customer B's orders or account details.
+- **Seller Privacy**: Seller A cannot view Seller B's menu, orders, batches, or revenue.
+- **Admin View-As**: Allows inspection without role impersonation; underlying admin actor is recorded in `audit_logs`.

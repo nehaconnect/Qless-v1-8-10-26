@@ -142,6 +142,7 @@ export default function Home() {
             user={currentUser}
             canteenStatus={canteenStatus}
             onUpdateStatus={handleUpdateCanteenStatus}
+            onLogout={handleLogout}
           />
         )}
         {effectiveRole === 'ADMIN' && (
