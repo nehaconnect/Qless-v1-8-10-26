@@ -1,16 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, pickupBatches, canteens, auditLogs } from '@/lib/db';
 import { eq, and, asc, sql } from 'drizzle-orm';
-import { requireSeller } from '@/lib/auth/server';
+import { requireSeller, getSessionUser } from '@/lib/auth/server';
 
 export async function GET(req: NextRequest) {
   try {
+    const authUser = await getSessionUser();
     const { searchParams } = new URL(req.url);
     const dateStr = searchParams.get('date') || new Date().toISOString().split('T')[0];
     const canteenId = searchParams.get('canteenId');
 
     let targetCanteenId: string | null = canteenId;
-    if (!targetCanteenId) {
+
+    if (authUser?.role === 'SELLER') {
+      if (canteenId && canteenId !== authUser.canteenId && authUser.effectiveRole !== 'ADMIN') {
+        return NextResponse.json({ error: 'Forbidden: Cannot access batches from another canteen' }, { status: 403 });
+      }
+      targetCanteenId = authUser.canteenId ?? null;
+    } else if (!targetCanteenId) {
       const defaultCanteen = await db.query.canteens.findFirst({
         where: eq(canteens.name, 'IP Canteen')
       });
@@ -85,6 +92,7 @@ export async function PATCH(req: NextRequest) {
 
     return NextResponse.json({ success: true, batch: updated });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 400 });
+    const isForbidden = err.message?.includes('Forbidden');
+    return NextResponse.json({ error: err.message }, { status: isForbidden ? 403 : 400 });
   }
 }

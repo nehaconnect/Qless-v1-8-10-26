@@ -4,6 +4,7 @@ import { eq, and, asc } from 'drizzle-orm';
 import { requireAuth } from '@/lib/auth/server';
 import {
   sellerAcceptOrder,
+  sellerRejectOrder,
   sellerSuggestTime,
   customerRespondTimeSuggestion,
   sellerMarkOrderReady,
@@ -76,6 +77,13 @@ export async function PATCH(
         result = await sellerAcceptOrder(orderId, authUser.id, sellerCanteen);
         break;
 
+      case 'SELLER_REJECT':
+        if (authUser.effectiveRole !== 'SELLER' && authUser.effectiveRole !== 'ADMIN') {
+          return NextResponse.json({ error: 'Forbidden: Seller access required' }, { status: 403 });
+        }
+        result = await sellerRejectOrder(orderId, authUser.id, body.reason, sellerCanteen);
+        break;
+
       case 'SELLER_SUGGEST_TIME':
         if (authUser.effectiveRole !== 'SELLER' && authUser.effectiveRole !== 'ADMIN') {
           return NextResponse.json({ error: 'Forbidden: Seller access required' }, { status: 403 });
@@ -103,6 +111,7 @@ export async function PATCH(
 
     return NextResponse.json({ success: true, result });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 400 });
+    const isForbidden = err.message?.includes('Forbidden');
+    return NextResponse.json({ error: err.message }, { status: isForbidden ? 403 : 400 });
   }
 }
