@@ -1,0 +1,75 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { db, canteens, auditLogs } from '@/lib/db';
+import { eq } from 'drizzle-orm';
+import { getSessionUser, requireSeller } from '@/lib/auth/server';
+
+export async function GET(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const canteenId = searchParams.get('canteenId');
+
+    const canteen = canteenId
+      ? await db.query.canteens.findFirst({ where: eq(canteens.id, canteenId) })
+      : await db.query.canteens.findFirst({ where: eq(canteens.name, 'IP Canteen') });
+
+    if (!canteen) {
+      return NextResponse.json({ error: 'Canteen not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ canteen });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 500 });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const user = await requireSeller();
+    const body = await req.json();
+    const { canteenId, operatingStatus, openingTime, closingTime, defaultBatchCapacity } = body;
+
+    const targetCanteenId = user.canteenId || canteenId;
+    if (!targetCanteenId) {
+      return NextResponse.json({ error: 'Canteen ID required' }, { status: 400 });
+    }
+
+    const currentCanteen = await db.query.canteens.findFirst({
+      where: eq(canteens.id, targetCanteenId)
+    });
+
+    if (!currentCanteen) {
+      return NextResponse.json({ error: 'Canteen not found' }, { status: 404 });
+    }
+
+    const updateData: any = { updatedAt: new Date() };
+    if (operatingStatus && ['OPEN', 'TOO_BUSY', 'CLOSED'].includes(operatingStatus)) {
+      updateData.operatingStatus = operatingStatus;
+    }
+    if (openingTime) updateData.openingTime = openingTime;
+    if (closingTime) updateData.closingTime = closingTime;
+    if (defaultBatchCapacity && defaultBatchCapacity > 0) {
+      updateData.defaultBatchCapacity = defaultBatchCapacity;
+    }
+
+    const [updated] = await db.update(canteens)
+      .set(updateData)
+      .where(eq(canteens.id, targetCanteenId))
+      .returning();
+
+    // Immutable audit record
+    await db.insert(auditLogs).values({
+      canteenId: targetCanteenId,
+      actorId: user.id,
+      actorRole: user.role,
+      action: 'CANTEEN_STATUS_UPDATE',
+      entityType: 'CANTEEN',
+      entityId: targetCanteenId,
+      beforeState: { operatingStatus: currentCanteen.operatingStatus },
+      afterState: { operatingStatus: updated.operatingStatus },
+    });
+
+    return NextResponse.json({ success: true, canteen: updated });
+  } catch (err: any) {
+    return NextResponse.json({ error: err.message }, { status: 400 });
+  }
+}
