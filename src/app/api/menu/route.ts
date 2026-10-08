@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { name, description, price, categoryId, isVegetarian, isTodaysMenu, canteenId } = body;
 
-    const targetCanteenId = user.canteenId || canteenId;
+    const targetCanteenId = user.effectiveRole === 'ADMIN' ? (canteenId || user.canteenId) : user.canteenId;
     if (!targetCanteenId) {
       return NextResponse.json({ error: 'Canteen ID required' }, { status: 400 });
     }
@@ -104,6 +104,10 @@ export async function PATCH(req: NextRequest) {
 
     if (!existing) {
       return NextResponse.json({ error: 'Item not found' }, { status: 404 });
+    }
+
+    if (user.effectiveRole !== 'ADMIN' && existing.canteenId !== user.canteenId) {
+      return NextResponse.json({ error: 'Forbidden: You can only edit menu items for your own canteen' }, { status: 403 });
     }
 
     const updates: any = { updatedAt: new Date() };

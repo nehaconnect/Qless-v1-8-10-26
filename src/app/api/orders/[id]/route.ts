@@ -29,6 +29,9 @@ export async function GET(
     if (authUser.effectiveRole === 'CUSTOMER' && order.customerId !== authUser.id) {
       return NextResponse.json({ error: 'Forbidden: Cannot access another customer order' }, { status: 403 });
     }
+    if (authUser.effectiveRole === 'SELLER' && authUser.canteenId !== order.canteenId) {
+      return NextResponse.json({ error: 'Forbidden: Cannot access orders from another canteen' }, { status: 403 });
+    }
 
     const items = await db.select().from(orderItems).where(eq(orderItems.orderId, orderId));
     const history = await db.select().from(orderStatusHistory)
@@ -63,13 +66,14 @@ export async function PATCH(
     const { action, suggestedTime, note, accept } = body;
 
     let result: any;
+    const sellerCanteen = authUser.effectiveRole === 'ADMIN' ? undefined : authUser.canteenId;
 
     switch (action) {
       case 'SELLER_ACCEPT':
         if (authUser.effectiveRole !== 'SELLER' && authUser.effectiveRole !== 'ADMIN') {
           return NextResponse.json({ error: 'Forbidden: Seller access required' }, { status: 403 });
         }
-        result = await sellerAcceptOrder(orderId, authUser.id);
+        result = await sellerAcceptOrder(orderId, authUser.id, sellerCanteen);
         break;
 
       case 'SELLER_SUGGEST_TIME':
@@ -79,7 +83,7 @@ export async function PATCH(
         if (!suggestedTime) {
           return NextResponse.json({ error: 'Suggested time is required' }, { status: 400 });
         }
-        result = await sellerSuggestTime(orderId, authUser.id, new Date(suggestedTime), note);
+        result = await sellerSuggestTime(orderId, authUser.id, new Date(suggestedTime), note, sellerCanteen);
         break;
 
       case 'CUSTOMER_RESPOND_TIME':
@@ -90,7 +94,7 @@ export async function PATCH(
         if (authUser.effectiveRole !== 'SELLER' && authUser.effectiveRole !== 'ADMIN') {
           return NextResponse.json({ error: 'Forbidden: Seller access required' }, { status: 403 });
         }
-        result = await sellerMarkOrderReady(orderId, authUser.id);
+        result = await sellerMarkOrderReady(orderId, authUser.id, sellerCanteen);
         break;
 
       default:

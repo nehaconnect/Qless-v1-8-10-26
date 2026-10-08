@@ -15,9 +15,7 @@ import {
   ChevronUp,
   X,
   Loader2,
-  Edit,
-  Sliders,
-  DollarSign
+  Inbox
 } from 'lucide-react';
 
 interface OrderItem {
@@ -75,11 +73,16 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   canteenStatus,
   onUpdateStatus,
 }) => {
-  const [tab, setTab] = useState<'ORDERS' | 'PREPARATION' | 'PICKUP' | 'MENU'>('ORDERS');
+  const [tab, setTab] = useState<'ORDERS' | 'MENU'>('ORDERS');
 
   const [ordersList, setOrdersList] = useState<Order[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // In-flight action tracking
+  const [actionLoading, setActionLoading] = useState<Record<string, string>>({});
+  const [portalError, setPortalError] = useState<string | null>(null);
 
   // Expanded batch IDs in accordion
   const [expandedBatches, setExpandedBatches] = useState<Record<string, boolean>>({});
@@ -96,8 +99,9 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   const [suggestTimeStr, setSuggestTimeStr] = useState('11:30');
 
   // Load orders & batches
-  const refreshData = async () => {
+  const refreshData = async (isInitial = false) => {
     try {
+      if (isInitial) setIsLoading(true);
       const [ordRes, batchRes, menuRes] = await Promise.all([
         fetch('/api/orders'),
         fetch('/api/batches'),
@@ -112,12 +116,17 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       if (ordData.orders) setOrdersList(ordData.orders);
       if (batchData.batches) setBatches(batchData.batches);
       if (menuData.items) setMenuItems(menuData.items);
-    } catch {}
+    } catch {
+      // Quiet fail on background interval
+    } finally {
+      if (isInitial) setIsLoading(false);
+    }
   };
 
   useEffect(() => {
-    refreshData();
-    const interval = setInterval(refreshData, 5000);
+    refreshData(true);
+    // 15-second balanced interval
+    const interval = setInterval(() => refreshData(false), 15000);
     return () => clearInterval(interval);
   }, []);
 
@@ -127,24 +136,51 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
 
   // Seller Action: Accept Requested Time
   const handleAcceptOrder = async (orderId: string) => {
+    if (actionLoading[orderId]) return;
+    setPortalError(null);
+    setActionLoading(prev => ({ ...prev, [orderId]: 'ACCEPTING' }));
+
+    // Optimistic update
+    const prevOrders = [...ordersList];
+    setOrdersList(prev =>
+      prev.map(o => (o.id === orderId ? { ...o, status: 'ACCEPTED', paymentStatus: 'PENDING' } : o))
+    );
+
     try {
-      await fetch(`/api/orders/${orderId}`, {
+      const res = await fetch(`/api/orders/${orderId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'SELLER_ACCEPT' }),
       });
-      refreshData();
-    } catch {}
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to accept order.');
+      }
+      await refreshData(false);
+    } catch (err: any) {
+      setOrdersList(prevOrders);
+      setPortalError(err.message || 'Error accepting order.');
+    } finally {
+      setActionLoading(prev => {
+        const next = { ...prev };
+        delete next[orderId];
+        return next;
+      });
+    }
   };
 
   // Seller Action: Suggest Different Time
   const handleSuggestTime = async () => {
-    if (!suggestOrderId) return;
+    if (!suggestOrderId || actionLoading[suggestOrderId]) return;
+    setPortalError(null);
+    const orderId = suggestOrderId;
+    setActionLoading(prev => ({ ...prev, [orderId]: 'SUGGESTING' }));
+
     try {
       const todayStr = new Date().toISOString().split('T')[0];
       const suggestedISO = `${todayStr}T${suggestTimeStr}:00.000Z`;
 
-      await fetch(`/api/orders/${suggestOrderId}`, {
+      const res = await fetch(`/api/orders/${orderId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -152,39 +188,97 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
           suggestedTime: suggestedISO,
         }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to suggest time.');
+      }
       setSuggestOrderId(null);
-      refreshData();
-    } catch {}
+      await refreshData(false);
+    } catch (err: any) {
+      setPortalError(err.message || 'Error suggesting time.');
+    } finally {
+      setActionLoading(prev => {
+        const next = { ...prev };
+        delete next[orderId];
+        return next;
+      });
+    }
   };
 
   // Seller Action: Start Preparing Batch
   const handleStartBatchPrep = async (batchId: string) => {
+    if (actionLoading[batchId]) return;
+    setPortalError(null);
+    setActionLoading(prev => ({ ...prev, [batchId]: 'STARTING_PREP' }));
+
+    // Optimistic update
+    const prevOrders = [...ordersList];
+    setOrdersList(prev =>
+      prev.map(o => (o.batchId === batchId && o.status === 'CONFIRMED' ? { ...o, status: 'PREPARING' } : o))
+    );
+
     try {
-      await fetch('/api/orders/batch-prep', {
+      const res = await fetch('/api/orders/batch-prep', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ batchId }),
       });
-      refreshData();
-    } catch {}
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to start batch preparation.');
+      }
+      await refreshData(false);
+    } catch (err: any) {
+      setOrdersList(prevOrders);
+      setPortalError(err.message || 'Error starting batch.');
+    } finally {
+      setActionLoading(prev => {
+        const next = { ...prev };
+        delete next[batchId];
+        return next;
+      });
+    }
   };
 
   // Seller Action: Mark Order Ready
   const handleMarkReady = async (orderId: string) => {
+    if (actionLoading[orderId]) return;
+    setPortalError(null);
+    setActionLoading(prev => ({ ...prev, [orderId]: 'MARKING_READY' }));
+
+    // Optimistic update
+    const prevOrders = [...ordersList];
+    setOrdersList(prev =>
+      prev.map(o => (o.id === orderId ? { ...o, status: 'READY' } : o))
+    );
+
     try {
-      await fetch(`/api/orders/${orderId}`, {
+      const res = await fetch(`/api/orders/${orderId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'SELLER_READY' }),
       });
-      refreshData();
-    } catch {}
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to mark order ready.');
+      }
+      await refreshData(false);
+    } catch (err: any) {
+      setOrdersList(prevOrders);
+      setPortalError(err.message || 'Error marking ready.');
+    } finally {
+      setActionLoading(prev => {
+        const next = { ...prev };
+        delete next[orderId];
+        return next;
+      });
+    }
   };
 
   // Seller Action: Verify 4-Char Pickup Code
   const handleVerifyPickupCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!verifyOrderId || !enteredCode.trim()) return;
+    if (!verifyOrderId || !enteredCode.trim() || verifyLoading) return;
 
     setVerifyLoading(true);
     setVerifyError(null);
@@ -206,8 +300,8 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       setTimeout(() => {
         setVerifyOrderId(null);
         setVerifySuccess(null);
-      }, 1500);
-      refreshData();
+      }, 1200);
+      await refreshData(false);
     } catch (err: any) {
       setVerifyError(err.message || 'Incorrect pickup code');
     } finally {
@@ -217,21 +311,45 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
 
   // Menu Toggle (Sold-Out / Today's Menu)
   const handleToggleMenuItem = async (itemId: string, field: 'isAvailable' | 'isTodaysMenu', currentVal: boolean) => {
+    const key = `${itemId}_${field}`;
+    if (actionLoading[key]) return;
+
+    setPortalError(null);
+    setActionLoading(prev => ({ ...prev, [key]: 'SAVING' }));
+
+    // Optimistic toggle
+    const prevMenu = [...menuItems];
+    setMenuItems(prev =>
+      prev.map(it => (it.id === itemId ? { ...it, [field]: !currentVal } : it))
+    );
+
     try {
-      await fetch('/api/menu', {
+      const res = await fetch('/api/menu', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ itemId, [field]: !currentVal }),
       });
-      refreshData();
-    } catch {}
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to update menu item.');
+      }
+      await refreshData(false);
+    } catch (err: any) {
+      setMenuItems(prevMenu);
+      setPortalError(err.message || 'Error updating item.');
+    } finally {
+      setActionLoading(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }
   };
 
   // Group active orders by batch
   const batchesWithOrders = batches.map(batch => {
     const ordersInBatch = ordersList.filter(o => o.batchId === batch.id);
 
-    // Calculate aggregated item quantities for the batch preparation summary
     const itemQuantities: Record<string, number> = {};
     ordersInBatch.forEach(o => {
       o.items?.forEach(i => {
@@ -254,46 +372,85 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
           <span className="text-xs font-bold text-slate-500 uppercase">Canteen Operating Status</span>
           <div className="flex items-center gap-2 mt-1">
             <h2 className="text-base font-extrabold text-text-primary">IP Canteen (IPCW)</h2>
-            <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${canteenStatus === 'OPEN' ? 'bg-emerald-100 text-emerald-800' : canteenStatus === 'TOO_BUSY' ? 'bg-amber-100 text-amber-800' : 'bg-rose-100 text-rose-800'}`}>
+            <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+              canteenStatus === 'OPEN'
+                ? 'bg-emerald-100 text-emerald-800'
+                : canteenStatus === 'TOO_BUSY'
+                ? 'bg-amber-100 text-amber-800'
+                : 'bg-rose-100 text-rose-800'
+            }`}>
               {canteenStatus}
             </span>
           </div>
         </div>
 
-        {/* Status Switcher Buttons */}
-        <div className="flex gap-2">
+        {/* Operating Status Quick Buttons */}
+        <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={() => onUpdateStatus('OPEN')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${canteenStatus === 'OPEN' ? 'bg-emerald-600 text-white shadow-soft' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            className={`btn-tactile px-3.5 py-2 min-h-[44px] rounded-xl text-xs font-bold transition flex items-center gap-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
+              canteenStatus === 'OPEN'
+                ? 'bg-emerald-600 text-white shadow-soft'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
           >
-            OPEN
+            <Check className="w-3.5 h-3.5" /> OPEN (Accepting Orders)
           </button>
           <button
             onClick={() => onUpdateStatus('TOO_BUSY')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${canteenStatus === 'TOO_BUSY' ? 'bg-amber-600 text-white shadow-soft' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            className={`btn-tactile px-3.5 py-2 min-h-[44px] rounded-xl text-xs font-bold transition flex items-center gap-1.5 focus:outline-none focus:ring-2 focus:ring-amber-500 ${
+              canteenStatus === 'TOO_BUSY'
+                ? 'bg-amber-500 text-white shadow-soft'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
           >
-            TOO BUSY
+            <Clock className="w-3.5 h-3.5" /> TOO BUSY (Pause New)
           </button>
           <button
             onClick={() => onUpdateStatus('CLOSED')}
-            className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition ${canteenStatus === 'CLOSED' ? 'bg-rose-600 text-white shadow-soft' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+            className={`btn-tactile px-3.5 py-2 min-h-[44px] rounded-xl text-xs font-bold transition flex items-center gap-1.5 focus:outline-none focus:ring-2 focus:ring-rose-500 ${
+              canteenStatus === 'CLOSED'
+                ? 'bg-rose-600 text-white shadow-soft'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
           >
-            CLOSED
+            <X className="w-3.5 h-3.5" /> CLOSED
           </button>
         </div>
       </div>
 
-      {/* Seller Tabs */}
-      <div className="flex gap-2 border-b border-slate-200 pb-3">
+      {/* Global Error Banner */}
+      {portalError && (
+        <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-rose-600 flex-shrink-0" />
+            <span>{portalError}</span>
+          </div>
+          <button onClick={() => setPortalError(null)} className="text-rose-600 hover:text-rose-800 p-1">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* Navigation Tabs */}
+      <div className="flex gap-2 border-b border-slate-200 pb-3" role="tablist">
         <button
           onClick={() => setTab('ORDERS')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${tab === 'ORDERS' ? 'bg-deep-blue text-white shadow-soft' : 'text-slate-600 hover:bg-slate-100'}`}
+          className={`px-4 py-2 min-h-[44px] rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+            tab === 'ORDERS' ? 'bg-deep-blue text-white shadow-soft' : 'text-slate-600 hover:bg-slate-100'
+          }`}
+          role="tab"
+          aria-selected={tab === 'ORDERS'}
         >
           <Clock className="w-4 h-4" /> Batches & Orders
         </button>
         <button
           onClick={() => setTab('MENU')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${tab === 'MENU' ? 'bg-deep-blue text-white shadow-soft' : 'text-slate-600 hover:bg-slate-100'}`}
+          className={`px-4 py-2 min-h-[44px] rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+            tab === 'MENU' ? 'bg-deep-blue text-white shadow-soft' : 'text-slate-600 hover:bg-slate-100'
+          }`}
+          role="tab"
+          aria-selected={tab === 'MENU'}
         >
           <Store className="w-4 h-4" /> Menu & Sold Out
         </button>
@@ -304,13 +461,22 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       {/* ========================================================================= */}
       {tab === 'ORDERS' && (
         <div className="space-y-4">
-          {batchesWithOrders.length === 0 ? (
+          {isLoading && batches.length === 0 ? (
+            <div className="space-y-4 animate-pulse">
+              {[...Array(3)].map((_, i) => (
+                <div key={i} className="bg-white rounded-3xl border border-slate-200 p-6 h-36" />
+              ))}
+            </div>
+          ) : batchesWithOrders.length === 0 ? (
             <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-500 text-xs">
-              No orders received for any batch yet.
+              <Inbox className="w-8 h-8 mx-auto mb-2 opacity-40" />
+              No active orders received for any batch yet today.
             </div>
           ) : (
             batchesWithOrders.map(({ batch, orders: bOrders, itemQuantities }) => {
               const isExpanded = expandedBatches[batch.id] ?? true;
+              const isBatchPrepStarting = actionLoading[batch.id] === 'STARTING_PREP';
+
               return (
                 <div key={batch.id} className="bg-white rounded-3xl border border-slate-200 shadow-card overflow-hidden">
                   {/* Batch Header Bar */}
@@ -337,9 +503,19 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                           e.stopPropagation();
                           handleStartBatchPrep(batch.id);
                         }}
-                        className="btn-tactile px-3 py-1.5 rounded-xl bg-primary-blue text-white text-xs font-bold hover:bg-deep-blue flex items-center gap-1.5"
+                        disabled={isBatchPrepStarting}
+                        className="btn-tactile px-3 py-2 min-h-[44px] rounded-xl bg-primary-blue text-white text-xs font-bold hover:bg-deep-blue disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 focus:outline-none focus:ring-2 focus:ring-primary-blue"
+                        aria-busy={isBatchPrepStarting}
                       >
-                        <Flame className="w-3.5 h-3.5" /> Start Preparing Batch
+                        {isBatchPrepStarting ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Starting...
+                          </>
+                        ) : (
+                          <>
+                            <Flame className="w-3.5 h-3.5" /> Start Preparing Batch
+                          </>
+                        )}
                       </button>
                       {isExpanded ? <ChevronUp className="w-4 h-4 text-slate-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
                     </div>
@@ -348,7 +524,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                   {/* Batch Body */}
                   {isExpanded && (
                     <div className="p-4 space-y-4">
-                      {/* Batch Preparation Summary (Consolidated Quantities) */}
+                      {/* Batch Preparation Summary */}
                       {Object.keys(itemQuantities).length > 0 && (
                         <div className="p-3.5 rounded-2xl bg-amber-50/70 border border-amber-200">
                           <span className="text-[10px] font-extrabold text-amber-900 uppercase tracking-wider block mb-1">
@@ -366,74 +542,99 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
 
                       {/* Individual Customer Orders in this Batch */}
                       <div className="space-y-3">
-                        {bOrders.map(ord => (
-                          <div key={ord.id} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                            <div>
+                        {bOrders.map(ord => {
+                          const isAccepting = actionLoading[ord.id] === 'ACCEPTING';
+                          const isMarkingReady = actionLoading[ord.id] === 'MARKING_READY';
+                          const isOrderBusy = Boolean(actionLoading[ord.id]);
+
+                          return (
+                            <div key={ord.id} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="font-bold text-xs text-text-primary">{ord.customerName}</span>
+                                  <span className="text-[10px] text-slate-500 font-mono">({ord.customerPhone})</span>
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-soft-blue text-deep-blue">
+                                    {ord.status}
+                                  </span>
+                                </div>
+                                <p className="text-[11px] text-text-secondary mt-0.5">
+                                  Exact Requested Time: <span className="font-bold text-deep-blue">{new Date(ord.exactPickupTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span> • Order #{ord.orderNumber}
+                                </p>
+                                <div className="text-[11px] text-slate-700 mt-1">
+                                  {ord.items?.map(i => `${i.itemName} × ${i.quantity}`).join(', ')}
+                                </div>
+                              </div>
+
+                              {/* Seller Action Controls */}
                               <div className="flex items-center gap-2">
-                                <span className="font-bold text-xs text-text-primary">{ord.customerName}</span>
-                                <span className="text-[10px] text-slate-500 font-mono">({ord.customerPhone})</span>
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-soft-blue text-deep-blue">
-                                  {ord.status}
-                                </span>
-                              </div>
-                              <p className="text-[11px] text-text-secondary mt-0.5">
-                                Exact Requested Time: <span className="font-bold text-deep-blue">{new Date(ord.exactPickupTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span> • Order #{ord.orderNumber}
-                              </p>
-                              <div className="text-[11px] text-slate-700 mt-1">
-                                {ord.items?.map(i => `${i.itemName} × ${i.quantity}`).join(', ')}
+                                {ord.status === 'REQUESTED' && (
+                                  <>
+                                    <button
+                                      onClick={() => handleAcceptOrder(ord.id)}
+                                      disabled={isOrderBusy}
+                                      className="px-3.5 py-2 min-h-[44px] rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                      aria-busy={isAccepting}
+                                    >
+                                      {isAccepting ? (
+                                        <>
+                                          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Accepting...
+                                        </>
+                                      ) : (
+                                        'Accept Time'
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={() => setSuggestOrderId(ord.id)}
+                                      disabled={isOrderBusy}
+                                      className="px-3.5 py-2 min-h-[44px] rounded-xl bg-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      Suggest Time
+                                    </button>
+                                  </>
+                                )}
+
+                                {ord.status === 'PREPARING' && (
+                                  <button
+                                    onClick={() => handleMarkReady(ord.id)}
+                                    disabled={isOrderBusy}
+                                    className="px-3.5 py-2 min-h-[44px] rounded-xl bg-amber-500 text-white text-xs font-bold hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                                    aria-busy={isMarkingReady}
+                                  >
+                                    {isMarkingReady ? (
+                                      <>
+                                        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Updating...
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Check className="w-3.5 h-3.5" /> Mark Ready
+                                      </>
+                                    )}
+                                  </button>
+                                )}
+
+                                {ord.status === 'READY' && (
+                                  <button
+                                    onClick={() => {
+                                      setVerifyOrderId(ord.id);
+                                      setEnteredCode('');
+                                      setVerifyError(null);
+                                      setVerifySuccess(null);
+                                    }}
+                                    className="px-3.5 py-2 min-h-[44px] rounded-xl bg-deep-blue text-white text-xs font-bold hover:bg-blue-800 flex items-center gap-1.5 shadow-soft focus:outline-none focus:ring-2 focus:ring-primary-blue"
+                                  >
+                                    <QrCode className="w-3.5 h-3.5" /> Enter Pickup Code
+                                  </button>
+                                )}
+
+                                {ord.status === 'COLLECTED' && (
+                                  <span className="text-xs font-bold text-emerald-700 flex items-center gap-1">
+                                    <CheckCircle2 className="w-4 h-4" /> Collected
+                                  </span>
+                                )}
                               </div>
                             </div>
-
-                            {/* Seller Action Controls */}
-                            <div className="flex items-center gap-2">
-                              {ord.status === 'REQUESTED' && (
-                                <>
-                                  <button
-                                    onClick={() => handleAcceptOrder(ord.id)}
-                                    className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700"
-                                  >
-                                    Accept Time
-                                  </button>
-                                  <button
-                                    onClick={() => setSuggestOrderId(ord.id)}
-                                    className="px-3 py-1.5 rounded-xl bg-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-300"
-                                  >
-                                    Suggest Time
-                                  </button>
-                                </>
-                              )}
-
-                              {ord.status === 'PREPARING' && (
-                                <button
-                                  onClick={() => handleMarkReady(ord.id)}
-                                  className="px-3 py-1.5 rounded-xl bg-amber-500 text-white text-xs font-bold hover:bg-amber-600 flex items-center gap-1"
-                                >
-                                  <Check className="w-3.5 h-3.5" /> Mark Ready
-                                </button>
-                              )}
-
-                              {ord.status === 'READY' && (
-                                <button
-                                  onClick={() => {
-                                    setVerifyOrderId(ord.id);
-                                    setEnteredCode('');
-                                    setVerifyError(null);
-                                    setVerifySuccess(null);
-                                  }}
-                                  className="px-3.5 py-1.5 rounded-xl bg-deep-blue text-white text-xs font-bold hover:bg-blue-800 flex items-center gap-1 shadow-soft"
-                                >
-                                  <QrCode className="w-3.5 h-3.5" /> Enter Pickup Code
-                                </button>
-                              )}
-
-                              {ord.status === 'COLLECTED' && (
-                                <span className="text-xs font-bold text-emerald-700 flex items-center gap-1">
-                                  <CheckCircle2 className="w-4 h-4" /> Collected
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -452,34 +653,70 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
           <h3 className="font-extrabold text-sm text-text-primary">Menu Management & Availability Switches</h3>
           <p className="text-xs text-text-secondary">Toggle SOLD OUT immediately to disable customer orders in real-time.</p>
 
-          <div className="space-y-3">
-            {menuItems.map(item => (
-              <div key={item.id} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between">
-                <div>
-                  <h4 className="font-bold text-xs text-text-primary">{item.name}</h4>
-                  <span className="text-[11px] font-extrabold text-slate-700">₹{item.price}</span>
-                </div>
+          {isLoading && menuItems.length === 0 ? (
+            <div className="space-y-3 animate-pulse">
+              {[...Array(4)].map((_, i) => (
+                <div key={i} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 h-16" />
+              ))}
+            </div>
+          ) : menuItems.length === 0 ? (
+            <div className="text-center py-10 text-slate-400 text-xs">
+              <Inbox className="w-8 h-8 mx-auto mb-2 opacity-40" />
+              No menu items configured for your canteen.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {menuItems.map(item => {
+                const isAvailBusy = actionLoading[`${item.id}_isAvailable`] === 'SAVING';
+                const isTodaysBusy = actionLoading[`${item.id}_isTodaysMenu`] === 'SAVING';
 
-                <div className="flex items-center gap-3">
-                  {/* Today's Menu Toggle */}
-                  <button
-                    onClick={() => handleToggleMenuItem(item.id, 'isTodaysMenu', item.isTodaysMenu)}
-                    className={`px-3 py-1 rounded-xl text-xs font-bold border transition ${item.isTodaysMenu ? 'bg-blue-50 border-blue-300 text-deep-blue' : 'bg-slate-100 border-slate-200 text-slate-400'}`}
-                  >
-                    {item.isTodaysMenu ? "Today's Menu: ON" : "Today's: OFF"}
-                  </button>
+                return (
+                  <div key={item.id} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div>
+                      <h4 className="font-bold text-xs text-text-primary">{item.name}</h4>
+                      <span className="text-[11px] font-extrabold text-slate-700">₹{item.price}</span>
+                    </div>
 
-                  {/* Instant Sold Out Toggle */}
-                  <button
-                    onClick={() => handleToggleMenuItem(item.id, 'isAvailable', item.isAvailable)}
-                    className={`px-3 py-1 rounded-xl text-xs font-bold border transition ${item.isAvailable ? 'bg-emerald-50 border-emerald-300 text-emerald-700' : 'bg-rose-50 border-rose-300 text-rose-700'}`}
-                  >
-                    {item.isAvailable ? 'AVAILABLE' : 'SOLD OUT'}
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
+                    <div className="flex items-center gap-3">
+                      {/* Today's Menu Toggle */}
+                      <button
+                        onClick={() => handleToggleMenuItem(item.id, 'isTodaysMenu', item.isTodaysMenu)}
+                        disabled={isTodaysBusy}
+                        className={`px-3 py-2 min-h-[44px] rounded-xl text-xs font-bold border transition disabled:opacity-50 flex items-center gap-1 ${
+                          item.isTodaysMenu
+                            ? 'bg-blue-50 border-blue-300 text-deep-blue'
+                            : 'bg-slate-100 border-slate-200 text-slate-400'
+                        }`}
+                        aria-busy={isTodaysBusy}
+                      >
+                        {isTodaysBusy ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : null}
+                        {item.isTodaysMenu ? "Today's Menu: ON" : "Today's: OFF"}
+                      </button>
+
+                      {/* Instant Sold Out Toggle */}
+                      <button
+                        onClick={() => handleToggleMenuItem(item.id, 'isAvailable', item.isAvailable)}
+                        disabled={isAvailBusy}
+                        className={`px-3 py-2 min-h-[44px] rounded-xl text-xs font-bold border transition disabled:opacity-50 flex items-center gap-1 ${
+                          item.isAvailable
+                            ? 'bg-emerald-50 border-emerald-300 text-emerald-700'
+                            : 'bg-rose-50 border-rose-300 text-rose-700'
+                        }`}
+                        aria-busy={isAvailBusy}
+                      >
+                        {isAvailBusy ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : null}
+                        {item.isAvailable ? 'AVAILABLE' : 'SOLD OUT'}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -491,7 +728,9 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
               <h3 className="font-bold text-sm text-text-primary flex items-center gap-2">
                 <Lock className="w-4 h-4 text-deep-blue" /> Verify Customer Pickup Code
               </h3>
-              <button onClick={() => setVerifyOrderId(null)}><X className="w-4 h-4 text-slate-400" /></button>
+              <button onClick={() => setVerifyOrderId(null)} className="p-1 text-slate-400 hover:text-slate-600">
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
             <form onSubmit={handleVerifyPickupCode} className="space-y-4">
@@ -504,10 +743,11 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                 maxLength={4}
                 autoFocus
                 required
+                disabled={verifyLoading}
                 value={enteredCode}
                 onChange={(e) => setEnteredCode(e.target.value.toUpperCase())}
                 placeholder="A7K2"
-                className="w-full text-center text-3xl font-black tracking-widest py-3 border-2 border-primary-blue rounded-2xl uppercase focus:outline-none focus:ring-4 focus:ring-blue-100"
+                className="w-full text-center text-3xl font-black tracking-widest py-3 border-2 border-primary-blue rounded-2xl uppercase focus:outline-none focus:ring-4 focus:ring-blue-100 disabled:opacity-50"
               />
 
               {verifyError && (
@@ -521,53 +761,65 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                 </p>
               )}
 
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setVerifyOrderId(null)}
-                  className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold hover:bg-slate-200"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={verifyLoading || enteredCode.length < 4}
-                  className="flex-1 py-2.5 rounded-xl bg-deep-blue text-white text-xs font-bold hover:bg-blue-800 disabled:opacity-50"
-                >
-                  {verifyLoading ? 'Verifying...' : 'Complete Pickup'}
-                </button>
-              </div>
+              <button
+                type="submit"
+                disabled={verifyLoading || enteredCode.length !== 4}
+                className="w-full py-3 min-h-[44px] rounded-xl bg-deep-blue text-white font-bold text-sm hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-tactile focus:outline-none focus:ring-2 focus:ring-primary-blue"
+                aria-busy={verifyLoading}
+              >
+                {verifyLoading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Verifying...
+                  </>
+                ) : (
+                  'Verify & Complete Pickup'
+                )}
+              </button>
             </form>
           </div>
         </div>
       )}
 
-      {/* Suggest Alternative Pickup Time Modal */}
+      {/* Suggest Alternative Time Modal */}
       {suggestOrderId && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-tactile border border-slate-200 p-6 max-w-sm w-full space-y-4 animate-in zoom-in-95">
-            <h3 className="font-bold text-sm text-text-primary">Suggest Alternative Pickup Time</h3>
-            <p className="text-xs text-text-secondary">Customer will be notified to accept or decline your suggested time.</p>
-            <input
-              type="time"
-              min="08:00"
-              max="17:00"
-              value={suggestTimeStr}
-              onChange={(e) => setSuggestTimeStr(e.target.value)}
-              className="w-full py-2.5 px-3 border border-slate-300 rounded-xl text-center text-lg font-bold"
-            />
-            <div className="flex gap-2">
-              <button
-                onClick={() => setSuggestOrderId(null)}
-                className="flex-1 py-2 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold"
-              >
-                Cancel
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <h3 className="font-bold text-sm text-text-primary flex items-center gap-2">
+                <Clock className="w-4 h-4 text-deep-blue" /> Suggest Alternative Time
+              </h3>
+              <button onClick={() => setSuggestOrderId(null)} className="p-1 text-slate-400 hover:text-slate-600">
+                <X className="w-4 h-4" />
               </button>
+            </div>
+
+            <div className="space-y-4">
+              <p className="text-xs text-text-secondary">
+                Select an alternative time for this order. Customer will receive a notification to accept or decline:
+              </p>
+
+              <input
+                type="time"
+                value={suggestTimeStr}
+                onChange={(e) => setSuggestTimeStr(e.target.value)}
+                min="08:00"
+                max="17:00"
+                className="w-full text-center text-xl font-bold py-2.5 border-2 border-slate-300 rounded-2xl focus:outline-none focus:ring-2 focus:ring-primary-blue"
+              />
+
               <button
                 onClick={handleSuggestTime}
-                className="flex-1 py-2 rounded-xl bg-deep-blue text-white text-xs font-bold"
+                disabled={Boolean(actionLoading[suggestOrderId])}
+                className="w-full py-3 min-h-[44px] rounded-xl bg-primary-blue text-white font-bold text-sm hover:bg-deep-blue disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-tactile"
+                aria-busy={Boolean(actionLoading[suggestOrderId])}
               >
-                Send Suggestion
+                {actionLoading[suggestOrderId] ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" /> Sending Suggestion...
+                  </>
+                ) : (
+                  'Send Proposed Time to Customer'
+                )}
               </button>
             </div>
           </div>

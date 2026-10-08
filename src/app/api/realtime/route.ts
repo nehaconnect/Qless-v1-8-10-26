@@ -4,10 +4,11 @@ import { eq, desc } from 'drizzle-orm';
 import { getSessionUser } from '@/lib/auth/server';
 
 export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+export const maxDuration = 30;
 
 export async function GET(req: NextRequest) {
   const encoder = new TextEncoder();
-  const user = await getSessionUser();
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -22,56 +23,34 @@ export async function GET(req: NextRequest) {
         }
       };
 
-      // Initial state handshake
-      const canteen = await db.query.canteens.findFirst({
-        where: eq(canteens.name, 'IP Canteen')
-      });
-      sendEvent('canteen_status', { canteen });
+      try {
+        // Initial state handshake
+        const canteen = await db.query.canteens.findFirst({
+          where: eq(canteens.name, 'IP Canteen'),
+        });
+        sendEvent('canteen_status', { canteen });
+      } catch {
+        // Non-blocking fallback
+      }
 
-      // Polling loop for state sync (SSE event stream)
-      let lastCheck = new Date();
-      const interval = setInterval(async () => {
+      // Lightweight keep-alive heartbeat for Vercel serverless streaming
+      // Avoids repeated continuous database polling that exhausts serverless connection pools
+      const heartbeatInterval = setInterval(() => {
         if (isClosed) {
-          clearInterval(interval);
+          clearInterval(heartbeatInterval);
           return;
         }
-
-        try {
-          // Send periodic heartbeat
-          sendEvent('heartbeat', { time: new Date().toISOString() });
-
-          // Check if canteen status changed
-          const freshCanteen = await db.query.canteens.findFirst({
-            where: eq(canteens.name, 'IP Canteen')
-          });
-          if (freshCanteen && freshCanteen.updatedAt > lastCheck) {
-            sendEvent('canteen_status', { canteen: freshCanteen });
-          }
-
-          // If authenticated user, check fresh notifications
-          if (user) {
-            const freshNotifs = await db.select().from(notifications)
-              .where(eq(notifications.userId, user.id))
-              .orderBy(desc(notifications.createdAt))
-              .limit(5);
-
-            sendEvent('notifications', { notifications: freshNotifs });
-          }
-
-          lastCheck = new Date();
-        } catch {
-          // ignore transient poll error
-        }
-      }, 3000);
+        sendEvent('heartbeat', { time: new Date().toISOString() });
+      }, 15000);
 
       req.signal.addEventListener('abort', () => {
         isClosed = true;
-        clearInterval(interval);
+        clearInterval(heartbeatInterval);
         try {
           controller.close();
         } catch {}
       });
-    }
+    },
   });
 
   return new Response(stream, {

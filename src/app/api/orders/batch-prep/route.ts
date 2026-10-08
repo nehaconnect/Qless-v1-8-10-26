@@ -12,7 +12,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Batch ID is required' }, { status: 400 });
     }
 
-    const result = await sellerStartPreparingBatch(batchId, authUser.id);
+    const sellerCanteen = authUser.effectiveRole === 'ADMIN' ? undefined : authUser.canteenId;
+    const result = await sellerStartPreparingBatch(batchId, authUser.id, sellerCanteen);
 
     return NextResponse.json({ success: true, count: result.count });
   } catch (err: any) {

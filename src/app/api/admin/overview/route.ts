@@ -9,68 +9,64 @@ export async function GET(req: NextRequest) {
 
     const todayStr = new Date().toISOString().split('T')[0];
 
-    // Total Customers
-    const [custCount] = await db.select({ count: sql<number>`count(*)::int` })
-      .from(user).where(eq(user.role, 'CUSTOMER'));
+    // Parallel aggregate queries: collapses 10 sequential roundtrips into 1 parallel batch
+    const [
+      [userCounts],
+      [orderCounts],
+      mostOrdered,
+      canteen,
+      recentLogs,
+      activeBatches,
+    ] = await Promise.all([
+      // Combined user counts
+      db.select({
+        customers: sql<number>`count(*) filter (where ${user.role} = 'CUSTOMER')::int`,
+        sellers: sql<number>`count(*) filter (where ${user.role} = 'SELLER')::int`,
+      }).from(user),
 
-    // Total Sellers
-    const [sellerCount] = await db.select({ count: sql<number>`count(*)::int` })
-      .from(user).where(eq(user.role, 'SELLER'));
+      // Combined order lifecycle metrics
+      db.select({
+        ordersToday: sql<number>`count(*) filter (where date(${orders.createdAt}) = ${todayStr}::date)::int`,
+        activeOrders: sql<number>`count(*) filter (where ${orders.status} in ('REQUESTED', 'ACCEPTED', 'PAYMENT_PENDING', 'CONFIRMED', 'PREPARING', 'READY'))::int`,
+        completedOrders: sql<number>`count(*) filter (where ${orders.status} = 'COLLECTED')::int`,
+        cancelledOrders: sql<number>`count(*) filter (where ${orders.status} in ('CANCELLED', 'REJECTED', 'PAYMENT_FAILED', 'EXPIRED'))::int`,
+      }).from(orders),
 
-    // Orders Today
-    const [ordersToday] = await db.select({ count: sql<number>`count(*)::int` })
-      .from(orders)
-      .where(sql`DATE(orders.created_at) = ${todayStr}`);
+      // Most Ordered Items
+      db.select({
+        itemName: orderItems.itemName,
+        totalQuantity: sql<number>`sum(${orderItems.quantity})::int`,
+      })
+        .from(orderItems)
+        .groupBy(orderItems.itemName)
+        .orderBy(desc(sql`sum(${orderItems.quantity})`))
+        .limit(5),
 
-    // Active Orders (REQUESTED, ACCEPTED, PAYMENT_PENDING, CONFIRMED, PREPARING, READY)
-    const [activeOrders] = await db.select({ count: sql<number>`count(*)::int` })
-      .from(orders)
-      .where(sql`orders.status IN ('REQUESTED', 'ACCEPTED', 'PAYMENT_PENDING', 'CONFIRMED', 'PREPARING', 'READY')`);
+      // Canteen Status
+      db.query.canteens.findFirst({
+        where: eq(canteens.name, 'IP Canteen')
+      }),
 
-    // Completed Orders
-    const [completedOrders] = await db.select({ count: sql<number>`count(*)::int` })
-      .from(orders)
-      .where(eq(orders.status, 'COLLECTED'));
+      // Recent Audit Logs
+      db.select().from(auditLogs)
+        .orderBy(desc(auditLogs.createdAt))
+        .limit(15),
 
-    // Cancelled / Rejected Orders
-    const [cancelledOrders] = await db.select({ count: sql<number>`count(*)::int` })
-      .from(orders)
-      .where(sql`orders.status IN ('CANCELLED', 'REJECTED', 'PAYMENT_FAILED', 'EXPIRED')`);
-
-    // Most Ordered Items (Aggregated from order_items)
-    const mostOrdered = await db.select({
-      itemName: orderItems.itemName,
-      totalQuantity: sql<number>`sum(order_items.quantity)::int`,
-    })
-      .from(orderItems)
-      .groupBy(orderItems.itemName)
-      .orderBy(desc(sql`sum(order_items.quantity)`))
-      .limit(5);
-
-    // Canteen Status
-    const canteen = await db.query.canteens.findFirst({
-      where: eq(canteens.name, 'IP Canteen')
-    });
-
-    // Recent Audit Logs
-    const recentLogs = await db.select().from(auditLogs)
-      .orderBy(desc(auditLogs.createdAt))
-      .limit(15);
-
-    // Active Batches for Today
-    const activeBatches = await db.select().from(pickupBatches)
-      .where(eq(pickupBatches.batchDate, todayStr))
-      .orderBy(pickupBatches.startTime)
-      .limit(20);
+      // Active Batches for Today
+      db.select().from(pickupBatches)
+        .where(eq(pickupBatches.batchDate, todayStr))
+        .orderBy(pickupBatches.startTime)
+        .limit(20),
+    ]);
 
     return NextResponse.json({
       metrics: {
-        customers: custCount?.count || 0,
-        sellers: sellerCount?.count || 0,
-        ordersToday: ordersToday?.count || 0,
-        activeOrders: activeOrders?.count || 0,
-        completedOrders: completedOrders?.count || 0,
-        cancelledOrders: cancelledOrders?.count || 0,
+        customers: userCounts?.customers || 0,
+        sellers: userCounts?.sellers || 0,
+        ordersToday: orderCounts?.ordersToday || 0,
+        activeOrders: orderCounts?.activeOrders || 0,
+        completedOrders: orderCounts?.completedOrders || 0,
+        cancelledOrders: orderCounts?.cancelledOrders || 0,
       },
       mostOrdered,
       canteen,

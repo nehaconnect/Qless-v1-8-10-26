@@ -17,7 +17,9 @@ import {
   Calendar,
   X,
   History,
-  AlertTriangle
+  AlertTriangle,
+  Loader2,
+  Inbox
 } from 'lucide-react';
 
 interface MenuItem {
@@ -78,6 +80,8 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
+  const [isLoadingMenu, setIsLoadingMenu] = useState(true);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(true);
 
   // Time selection for ordering
   const [selectedTimeStr, setSelectedTimeStr] = useState<string>('11:00');
@@ -88,37 +92,49 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
   const [ordersTab, setOrdersTab] = useState<'ACTIVE' | 'HISTORY'>('ACTIVE');
   const [activePickupCodes, setActivePickupCodes] = useState<Record<string, string>>({}); // Stored from live session responses
 
-  // UI state
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // UI action states
+  const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
+  const [actionLoading, setActionLoading] = useState<Record<string, string>>({});
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Fetch Menu
-  const fetchMenu = async () => {
+  const fetchMenu = async (isInitial = false) => {
     try {
+      if (isInitial) setIsLoadingMenu(true);
       const res = await fetch('/api/menu');
       const data = await res.json();
       if (data.categories) setCategories(data.categories);
       if (data.items) setMenuItems(data.items);
-    } catch {}
+    } catch {
+      // Quiet fail on background interval
+    } finally {
+      if (isInitial) setIsLoadingMenu(false);
+    }
   };
 
   // Fetch Orders
-  const fetchOrders = async () => {
+  const fetchOrders = async (isInitial = false) => {
     try {
+      if (isInitial) setIsLoadingOrders(true);
       const res = await fetch('/api/orders');
       const data = await res.json();
       if (data.orders) setOrdersList(data.orders);
-    } catch {}
+    } catch {
+      // Quiet fail on background interval
+    } finally {
+      if (isInitial) setIsLoadingOrders(false);
+    }
   };
 
   useEffect(() => {
-    fetchMenu();
-    fetchOrders();
+    fetchMenu(true);
+    fetchOrders(true);
+    // 20s balanced interval to avoid connection exhaustion
     const interval = setInterval(() => {
-      fetchOrders();
-      fetchMenu();
-    }, 6000);
+      fetchOrders(false);
+      fetchMenu(false);
+    }, 20000);
     return () => clearInterval(interval);
   }, []);
 
@@ -144,40 +160,48 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
 
   // Cart operations
   const addToCart = (item: MenuItem) => {
-    if (!item.isAvailable || canteenStatus !== 'OPEN') return;
+    if (!item.isAvailable) return;
     setCart(prev => {
       const existing = prev.find(i => i.item.id === item.id);
       if (existing) {
-        return prev.map(i => i.item.id === item.id ? { ...i, quantity: i.quantity + 1 } : i);
+        return prev.map(i => (i.item.id === item.id ? { ...i, quantity: i.quantity + 1 } : i));
       }
       return [...prev, { item, quantity: 1 }];
     });
   };
 
-  const removeFromCart = (itemId: string) => {
+  const updateCartQuantity = (itemId: string, delta: number) => {
     setCart(prev => {
-      const existing = prev.find(i => i.item.id === itemId);
-      if (existing && existing.quantity > 1) {
-        return prev.map(i => i.item.id === itemId ? { ...i, quantity: i.quantity - 1 } : i);
-      }
-      return prev.filter(i => i.item.id !== itemId);
+      return prev
+        .map(i => {
+          if (i.item.id === itemId) {
+            const nextQty = i.quantity + delta;
+            return nextQty > 0 ? { ...i, quantity: nextQty } : null;
+          }
+          return i;
+        })
+        .filter(Boolean) as CartItem[];
     });
   };
 
-  const cartTotal = cart.reduce((sum, i) => sum + parseFloat(i.item.price) * i.quantity, 0);
+  const cartTotal = cart.reduce((sum, ci) => sum + parseFloat(ci.item.price) * ci.quantity, 0);
 
-  // Submit Order
+  // Submit Order Request
   const handlePlaceOrder = async () => {
-    if (cart.length === 0) return;
+    if (cart.length === 0 || isSubmittingOrder) return;
     setErrorMsg(null);
-    setIsSubmitting(true);
+    setSuccessMsg(null);
+    setIsSubmittingOrder(true);
 
     try {
       const todayStr = new Date().toISOString().split('T')[0];
       const exactPickupISO = `${todayStr}T${selectedTimeStr}:00.000Z`;
 
       const payload = {
-        items: cart.map(i => ({ menuItemId: i.item.id, quantity: i.quantity })),
+        items: cart.map(ci => ({
+          menuItemId: ci.item.id,
+          quantity: ci.quantity,
+        })),
         exactPickupTime: exactPickupISO,
         idempotencyKey: `ord_${Date.now()}_${Math.random().toString(36).substring(7)}`,
       };
@@ -193,7 +217,6 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
         throw new Error(data.error || 'Failed to place order');
       }
 
-      // If plaintext pickup code was returned, store in session state for customer UI
       if (data.pickupCode && data.order?.id) {
         setActivePickupCodes(prev => ({ ...prev, [data.order.id]: data.pickupCode }));
       }
@@ -201,17 +224,27 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
       setCart([]);
       setActiveTab('ORDERS');
       setOrdersTab('ACTIVE');
-      fetchOrders();
+      await fetchOrders(false);
       setSuccessMsg(`Order #${data.order.orderNumber} submitted successfully!`);
     } catch (err: any) {
       setErrorMsg(err.message || 'Error creating order');
     } finally {
-      setIsSubmitting(false);
+      setIsSubmittingOrder(false);
     }
   };
 
   // Pay Order (Razorpay)
   const handlePayOrder = async (orderId: string) => {
+    if (actionLoading[orderId]) return;
+    setErrorMsg(null);
+    setActionLoading(prev => ({ ...prev, [orderId]: 'PAYING' }));
+
+    // Optimistic status update
+    const prevOrders = [...ordersList];
+    setOrdersList(prev =>
+      prev.map(o => (o.id === orderId ? { ...o, status: 'CONFIRMED', paymentStatus: 'PAID' } : o))
+    );
+
     try {
       const res = await fetch(`/api/orders/${orderId}/pay`, {
         method: 'POST',
@@ -222,19 +255,30 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
         }),
       });
       const data = await res.json();
-      if (res.ok) {
-        fetchOrders();
-        setSuccessMsg('Payment confirmed! Kitchen will prepare your meal.');
-      } else {
-        setErrorMsg(data.error || 'Payment failed');
+      if (!res.ok) {
+        throw new Error(data.error || 'Payment failed');
       }
+      await fetchOrders(false);
+      setSuccessMsg('Payment confirmed! Kitchen will prepare your meal.');
     } catch (err: any) {
-      setErrorMsg(err.message);
+      setOrdersList(prevOrders);
+      setErrorMsg(err.message || 'Payment processing failed');
+    } finally {
+      setActionLoading(prev => {
+        const next = { ...prev };
+        delete next[orderId];
+        return next;
+      });
     }
   };
 
   // Time suggestion response (Accept / Decline)
   const handleRespondTime = async (orderId: string, accept: boolean) => {
+    const actKey = `${orderId}_${accept ? 'accept' : 'decline'}`;
+    if (actionLoading[actKey]) return;
+    setErrorMsg(null);
+    setActionLoading(prev => ({ ...prev, [actKey]: 'RESPONDING' }));
+
     try {
       const res = await fetch(`/api/orders/${orderId}`, {
         method: 'PATCH',
@@ -244,11 +288,21 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
           accept,
         }),
       });
-      if (res.ok) {
-        fetchOrders();
-        setSuccessMsg(accept ? 'New pickup time accepted!' : 'Order cancelled.');
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Failed to update time proposal');
       }
-    } catch {}
+      await fetchOrders(false);
+      setSuccessMsg(accept ? 'New pickup time accepted!' : 'Order cancelled.');
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Error updating response');
+    } finally {
+      setActionLoading(prev => {
+        const next = { ...prev };
+        delete next[actKey];
+        return next;
+      });
+    }
   };
 
   // Filtered menu items
@@ -288,13 +342,13 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
       {errorMsg && (
         <div className="mb-4 p-3.5 rounded-xl bg-red-50 border border-red-200 text-danger text-xs font-semibold flex items-center justify-between">
           <span>{errorMsg}</span>
-          <button onClick={() => setErrorMsg(null)}><X className="w-4 h-4" /></button>
+          <button onClick={() => setErrorMsg(null)} className="p-1"><X className="w-4 h-4" /></button>
         </div>
       )}
       {successMsg && (
         <div className="mb-4 p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center justify-between">
           <span>{successMsg}</span>
-          <button onClick={() => setSuccessMsg(null)}><X className="w-4 h-4" /></button>
+          <button onClick={() => setSuccessMsg(null)} className="p-1"><X className="w-4 h-4" /></button>
         </div>
       )}
 
@@ -303,13 +357,17 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
         <div className="flex gap-2">
           <button
             onClick={() => setActiveTab('MENU')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 ${activeTab === 'MENU' ? 'bg-deep-blue text-white shadow-soft' : 'text-slate-600 hover:bg-slate-100'}`}
+            className={`px-4 py-2 min-h-[44px] rounded-xl text-xs font-bold transition flex items-center gap-2 ${
+              activeTab === 'MENU' ? 'bg-deep-blue text-white shadow-soft' : 'text-slate-600 hover:bg-slate-100'
+            }`}
           >
             <Coffee className="w-4 h-4" /> Menu
           </button>
           <button
             onClick={() => setActiveTab('ORDERS')}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 relative ${activeTab === 'ORDERS' ? 'bg-deep-blue text-white shadow-soft' : 'text-slate-600 hover:bg-slate-100'}`}
+            className={`px-4 py-2 min-h-[44px] rounded-xl text-xs font-bold transition flex items-center gap-2 relative ${
+              activeTab === 'ORDERS' ? 'bg-deep-blue text-white shadow-soft' : 'text-slate-600 hover:bg-slate-100'
+            }`}
           >
             <ShoppingBag className="w-4 h-4" /> My Orders
             {activeOrders.length > 0 && (
@@ -323,7 +381,9 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
         {/* Cart Quick Toggle Button */}
         <button
           onClick={() => setActiveTab('CART')}
-          className={`py-2 px-4 rounded-xl text-xs font-bold flex items-center gap-2 transition ${cart.length > 0 ? 'bg-primary-blue text-white shadow-soft' : 'bg-slate-100 text-slate-500'}`}
+          className={`py-2 px-4 min-h-[44px] rounded-xl text-xs font-bold flex items-center gap-2 transition ${
+            cart.length > 0 ? 'bg-primary-blue text-white shadow-soft' : 'bg-slate-100 text-slate-500'
+          }`}
         >
           <ShoppingBag className="w-4 h-4" />
           <span>Cart ({cart.reduce((s, i) => s + i.quantity, 0)})</span>
@@ -341,31 +401,39 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
             <div className="flex p-1 bg-slate-200/70 rounded-xl w-fit">
               <button
                 onClick={() => setMenuMode('TODAY')}
-                className={`px-4 py-1.5 rounded-lg text-xs font-bold transition ${menuMode === 'TODAY' ? 'bg-white text-deep-blue shadow-sm' : 'text-slate-600'}`}
+                className={`px-4 py-2 min-h-[40px] rounded-lg text-xs font-bold transition ${
+                  menuMode === 'TODAY' ? 'bg-white text-deep-blue shadow-sm' : 'text-slate-600'
+                }`}
               >
                 Today's Menu
               </button>
               <button
                 onClick={() => setMenuMode('ALL')}
-                className={`px-4 py-1.5 rounded-lg text-xs font-bold transition ${menuMode === 'ALL' ? 'bg-white text-deep-blue shadow-sm' : 'text-slate-600'}`}
+                className={`px-4 py-2 min-h-[40px] rounded-lg text-xs font-bold transition ${
+                  menuMode === 'ALL' ? 'bg-white text-deep-blue shadow-sm' : 'text-slate-600'
+                }`}
               >
-                Full Menu
+                All Items
               </button>
             </div>
 
-            {/* Category Chips */}
-            <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            {/* Category filter pills */}
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 max-w-full">
               <button
                 onClick={() => setSelectedCategory('ALL')}
-                className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition ${selectedCategory === 'ALL' ? 'bg-soft-blue text-deep-blue border border-blue-300' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                className={`px-3 py-1.5 min-h-[36px] rounded-lg text-xs font-bold whitespace-nowrap transition ${
+                  selectedCategory === 'ALL' ? 'bg-deep-blue text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
               >
-                All Items
+                All
               </button>
               {categories.map(cat => (
                 <button
                   key={cat.id}
                   onClick={() => setSelectedCategory(cat.id)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition ${selectedCategory === cat.id ? 'bg-soft-blue text-deep-blue border border-blue-300' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  className={`px-3 py-1.5 min-h-[36px] rounded-lg text-xs font-bold whitespace-nowrap transition ${
+                    selectedCategory === cat.id ? 'bg-deep-blue text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
                 >
                   {cat.name}
                 </button>
@@ -373,52 +441,65 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
             </div>
           </div>
 
-          {/* Food Cards Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {filteredItems.map(item => {
-              const inCart = cart.find(i => i.item.id === item.id);
-              return (
-                <div
-                  key={item.id}
-                  className={`bg-white rounded-2xl border p-4 shadow-card flex flex-col justify-between transition ${!item.isAvailable ? 'opacity-60 border-slate-200 bg-slate-50' : 'border-slate-200/80 hover:shadow-soft'}`}
-                >
-                  <div>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-2.5 h-2.5 rounded-sm border border-emerald-600 flex items-center justify-center">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
-                        </span>
-                        <span className="text-[11px] font-bold text-emerald-700">VEG</span>
+          {/* Menu Items Grid or Skeleton */}
+          {isLoadingMenu && menuItems.length === 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 animate-pulse">
+              {[...Array(8)].map((_, i) => (
+                <div key={i} className="bg-white rounded-3xl border border-slate-200 p-5 h-44 space-y-3">
+                  <div className="h-4 bg-slate-200 rounded w-3/4" />
+                  <div className="h-3 bg-slate-100 rounded w-full" />
+                  <div className="h-3 bg-slate-100 rounded w-1/2" />
+                  <div className="h-8 bg-slate-200 rounded-xl mt-4" />
+                </div>
+              ))}
+            </div>
+          ) : filteredItems.length === 0 ? (
+            <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-500 text-xs">
+              <Inbox className="w-8 h-8 mx-auto mb-2 opacity-40" />
+              No menu items currently available for this selection.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {filteredItems.map(item => {
+                const inCart = cart.find(ci => ci.item.id === item.id);
+                return (
+                  <div
+                    key={item.id}
+                    className={`bg-white rounded-3xl border p-5 shadow-card flex flex-col justify-between transition hover:shadow-tactile ${
+                      !item.isAvailable ? 'opacity-60 bg-slate-50 border-slate-200' : 'border-slate-200'
+                    }`}
+                  >
+                    <div>
+                      <div className="flex items-start justify-between gap-2">
+                        <h3 className="font-extrabold text-sm text-text-primary leading-snug">{item.name}</h3>
+                        <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 mt-1 ${item.isVegetarian ? 'bg-emerald-500' : 'bg-rose-500'}`} />
                       </div>
-                      {!item.isAvailable && (
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-100 text-rose-700">
-                          SOLD OUT
-                        </span>
-                      )}
+                      <p className="text-xs text-text-secondary mt-1 line-clamp-2">
+                        {item.description || 'Freshly prepared at IP Canteen.'}
+                      </p>
                     </div>
 
-                    <h3 className="font-bold text-sm text-text-primary mt-2">{item.name}</h3>
-                    {item.description && (
-                      <p className="text-xs text-text-secondary mt-1 line-clamp-2">{item.description}</p>
-                    )}
-                  </div>
+                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                      <span className="text-base font-black text-deep-blue">₹{item.price}</span>
 
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
-                    <span className="font-extrabold text-base text-text-primary">₹{item.price}</span>
-
-                    {item.isAvailable && canteenStatus === 'OPEN' ? (
-                      inCart ? (
-                        <div className="flex items-center gap-2 bg-soft-blue px-2 py-1 rounded-xl border border-blue-200">
+                      {!item.isAvailable ? (
+                        <span className="text-[11px] font-extrabold text-rose-600 bg-rose-50 px-2.5 py-1 rounded-lg">
+                          SOLD OUT
+                        </span>
+                      ) : inCart ? (
+                        <div className="flex items-center gap-2 bg-soft-blue rounded-xl p-1">
                           <button
-                            onClick={() => removeFromCart(item.id)}
-                            className="w-6 h-6 rounded-lg bg-white text-deep-blue font-bold flex items-center justify-center hover:bg-blue-100"
+                            onClick={() => updateCartQuantity(item.id, -1)}
+                            className="w-7 h-7 rounded-lg bg-white text-deep-blue flex items-center justify-center font-bold hover:bg-slate-50"
+                            aria-label={`Decrease quantity of ${item.name}`}
                           >
                             <Minus className="w-3.5 h-3.5" />
                           </button>
-                          <span className="text-xs font-bold text-deep-blue px-1">{inCart.quantity}</span>
+                          <span className="text-xs font-black text-deep-blue px-1">{inCart.quantity}</span>
                           <button
-                            onClick={() => addToCart(item)}
-                            className="w-6 h-6 rounded-lg bg-white text-deep-blue font-bold flex items-center justify-center hover:bg-blue-100"
+                            onClick={() => updateCartQuantity(item.id, 1)}
+                            className="w-7 h-7 rounded-lg bg-white text-deep-blue flex items-center justify-center font-bold hover:bg-slate-50"
+                            aria-label={`Increase quantity of ${item.name}`}
                           >
                             <Plus className="w-3.5 h-3.5" />
                           </button>
@@ -426,97 +507,106 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
                       ) : (
                         <button
                           onClick={() => addToCart(item)}
-                          className="btn-tactile px-3.5 py-1.5 rounded-xl bg-soft-blue text-deep-blue border border-blue-200 font-bold text-xs hover:bg-deep-blue hover:text-white transition flex items-center gap-1"
+                          disabled={canteenStatus !== 'OPEN'}
+                          className="btn-tactile px-3.5 py-2 min-h-[44px] rounded-xl bg-deep-blue text-white text-xs font-bold hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1 shadow-soft"
                         >
                           <Plus className="w-3.5 h-3.5" /> Add
                         </button>
-                      )
-                    ) : (
-                      <button disabled className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-400 font-semibold text-xs cursor-not-allowed">
-                        Unavailable
-                      </button>
-                    )}
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
       {/* ========================================================================= */}
-      {/* 2. CART & TIME SELECTION TAB */}
+      {/* 2. CART & CHECKOUT TAB */}
       {/* ========================================================================= */}
       {activeTab === 'CART' && (
-        <div className="max-w-2xl mx-auto bg-white rounded-3xl border border-slate-200 shadow-tactile p-6">
-          <h2 className="text-lg font-bold text-text-primary flex items-center gap-2 border-b border-slate-100 pb-3">
-            <ShoppingBag className="w-5 h-5 text-deep-blue" /> Your Cart
-          </h2>
+        <div className="max-w-2xl mx-auto space-y-6">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-200">
+            <h2 className="text-lg font-black text-text-primary">Your Order Cart</h2>
+            <button
+              onClick={() => setActiveTab('MENU')}
+              className="text-xs font-bold text-primary-blue hover:underline"
+            >
+              + Add More Items
+            </button>
+          </div>
 
           {cart.length === 0 ? (
-            <div className="py-12 text-center">
-              <ShoppingBag className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+            <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center space-y-3">
+              <ShoppingBag className="w-12 h-12 text-slate-300 mx-auto" />
               <p className="text-sm font-semibold text-slate-600">Your cart is empty</p>
               <button
                 onClick={() => setActiveTab('MENU')}
-                className="mt-3 text-xs text-primary-blue font-bold hover:underline"
+                className="btn-tactile px-4 py-2 min-h-[44px] rounded-xl bg-deep-blue text-white text-xs font-bold"
               >
                 Browse Menu
               </button>
             </div>
           ) : (
-            <div className="mt-4 space-y-6">
-              {/* Cart Items List */}
-              <div className="space-y-3">
-                {cart.map(c => (
-                  <div key={c.item.id} className="flex items-center justify-between p-3 rounded-2xl bg-slate-50 border border-slate-100">
+            <div className="bg-white rounded-3xl border border-slate-200 shadow-card p-6 space-y-6">
+              {/* Line items list */}
+              <div className="space-y-3 divide-y divide-slate-100">
+                {cart.map(ci => (
+                  <div key={ci.item.id} className="pt-3 first:pt-0 flex items-center justify-between">
                     <div>
-                      <h4 className="text-xs font-bold text-text-primary">{c.item.name}</h4>
-                      <p className="text-[11px] text-text-secondary">₹{c.item.price} each</p>
+                      <h4 className="font-bold text-xs text-text-primary">{ci.item.name}</h4>
+                      <span className="text-[11px] text-text-secondary">₹{ci.item.price} each</span>
                     </div>
 
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center gap-2 bg-white px-2 py-1 rounded-xl border border-slate-200">
-                        <button onClick={() => removeFromCart(c.item.id)} className="text-slate-600 hover:text-slate-900">
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2 bg-slate-100 rounded-xl p-1">
+                        <button
+                          onClick={() => updateCartQuantity(ci.item.id, -1)}
+                          className="w-7 h-7 rounded-lg bg-white text-slate-700 flex items-center justify-center font-bold hover:bg-slate-50"
+                        >
                           <Minus className="w-3.5 h-3.5" />
                         </button>
-                        <span className="text-xs font-bold px-1">{c.quantity}</span>
-                        <button onClick={() => addToCart(c.item)} className="text-slate-600 hover:text-slate-900">
+                        <span className="text-xs font-black text-text-primary px-1">{ci.quantity}</span>
+                        <button
+                          onClick={() => updateCartQuantity(ci.item.id, 1)}
+                          className="w-7 h-7 rounded-lg bg-white text-slate-700 flex items-center justify-center font-bold hover:bg-slate-50"
+                        >
                           <Plus className="w-3.5 h-3.5" />
                         </button>
                       </div>
-                      <span className="text-xs font-extrabold text-text-primary w-14 text-right">
-                        ₹{(parseFloat(c.item.price) * c.quantity).toFixed(2)}
+                      <span className="text-xs font-black text-deep-blue min-w-[50px] text-right">
+                        ₹{(parseFloat(ci.item.price) * ci.quantity).toFixed(2)}
                       </span>
                     </div>
                   </div>
                 ))}
               </div>
 
-              {/* Exact Requested Pickup Time Selection */}
-              <div className="p-4 rounded-2xl bg-soft-blue/50 border border-blue-200 space-y-3">
+              {/* Exact Pickup Time Picker */}
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <Clock className="w-4 h-4 text-deep-blue" />
-                    <span className="text-xs font-bold text-text-primary">Choose Exact Pickup Time</span>
+                    <span className="font-extrabold text-xs text-text-primary">Choose Exact Pickup Time</span>
                   </div>
-                  <span className="text-[11px] text-deep-blue font-semibold">Continuous 15-Min Batching</span>
+                  <span className="text-[10px] uppercase font-bold text-slate-500 bg-white px-2 py-0.5 rounded border">
+                    8:00 AM – 5:00 PM
+                  </span>
                 </div>
 
                 <div className="flex items-center gap-3">
                   <input
                     type="time"
-                    min="08:00"
-                    max="17:00"
                     value={selectedTimeStr}
                     onChange={(e) => setSelectedTimeStr(e.target.value)}
-                    className="px-3.5 py-2.5 bg-white border border-blue-300 rounded-xl text-sm font-bold text-deep-blue focus:outline-none focus:ring-2 focus:ring-primary-blue"
+                    min="08:00"
+                    max="17:00"
+                    className="px-3 py-2 min-h-[44px] rounded-xl border border-slate-300 font-bold text-sm bg-white text-deep-blue focus:outline-none focus:ring-2 focus:ring-primary-blue"
                   />
-                  <div className="text-xs text-text-secondary">
-                    <p className="text-[11px] text-slate-500">Pick any exact minute (e.g. 11:07 AM)</p>
-                    <p className="text-xs font-bold text-text-primary mt-0.5">
-                      Batch assigned: <span className="text-deep-blue font-extrabold">{calculatedBatch}</span>
-                    </p>
+                  <div className="text-xs">
+                    <span className="text-text-secondary block">Continuous 15-Minute Prep Batch:</span>
+                    <span className="font-extrabold text-deep-blue">{calculatedBatch}</span>
                   </div>
                 </div>
               </div>
@@ -534,11 +624,15 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
 
                 <button
                   onClick={handlePlaceOrder}
-                  disabled={isSubmitting || canteenStatus !== 'OPEN'}
-                  className="btn-tactile w-full py-3.5 px-4 rounded-xl text-white font-bold text-sm bg-gradient-to-r from-deep-blue to-primary-blue shadow-soft hover:shadow-tactile hover:opacity-95 disabled:opacity-50 flex items-center justify-center gap-2"
+                  disabled={isSubmittingOrder || canteenStatus !== 'OPEN'}
+                  className="btn-tactile w-full py-3.5 min-h-[48px] px-4 rounded-xl text-white font-bold text-sm bg-gradient-to-r from-deep-blue to-primary-blue shadow-soft hover:shadow-tactile hover:opacity-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 focus:outline-none focus:ring-2 focus:ring-primary-blue"
+                  aria-busy={isSubmittingOrder}
                 >
-                  {isSubmitting ? (
-                    <span>Submitting Order Request...</span>
+                  {isSubmittingOrder ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Submitting Order Request...</span>
+                    </>
                   ) : (
                     <>
                       <span>Submit Order for {selectedTimeStr}</span>
@@ -557,16 +651,24 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
       {/* ========================================================================= */}
       {activeTab === 'ORDERS' && (
         <div className="max-w-3xl mx-auto space-y-6">
-          <div className="flex p-1 bg-slate-200/70 rounded-xl w-fit">
+          <div className="flex p-1 bg-slate-200/70 rounded-xl w-fit" role="tablist">
             <button
               onClick={() => setOrdersTab('ACTIVE')}
-              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition ${ordersTab === 'ACTIVE' ? 'bg-white text-deep-blue shadow-sm' : 'text-slate-600'}`}
+              className={`px-4 py-2 min-h-[40px] rounded-lg text-xs font-bold transition ${
+                ordersTab === 'ACTIVE' ? 'bg-white text-deep-blue shadow-sm' : 'text-slate-600'
+              }`}
+              role="tab"
+              aria-selected={ordersTab === 'ACTIVE'}
             >
               Active Orders ({activeOrders.length})
             </button>
             <button
               onClick={() => setOrdersTab('HISTORY')}
-              className={`px-4 py-1.5 rounded-lg text-xs font-bold transition ${ordersTab === 'HISTORY' ? 'bg-white text-deep-blue shadow-sm' : 'text-slate-600'}`}
+              className={`px-4 py-2 min-h-[40px] rounded-lg text-xs font-bold transition ${
+                ordersTab === 'HISTORY' ? 'bg-white text-deep-blue shadow-sm' : 'text-slate-600'
+              }`}
+              role="tab"
+              aria-selected={ordersTab === 'HISTORY'}
             >
               Previous Orders ({previousOrders.length})
             </button>
@@ -575,14 +677,25 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
           {/* Active Orders List */}
           {ordersTab === 'ACTIVE' && (
             <div className="space-y-4">
-              {activeOrders.length === 0 ? (
-                <div className="bg-white rounded-3xl border border-slate-200 p-8 text-center">
+              {isLoadingOrders && ordersList.length === 0 ? (
+                <div className="space-y-4 animate-pulse">
+                  {[...Array(2)].map((_, i) => (
+                    <div key={i} className="bg-white rounded-3xl border border-slate-200 p-6 h-40" />
+                  ))}
+                </div>
+              ) : activeOrders.length === 0 ? (
+                <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center">
                   <Coffee className="w-10 h-10 text-slate-300 mx-auto mb-2" />
                   <p className="text-sm font-semibold text-slate-600">No active orders</p>
+                  <p className="text-xs text-slate-400 mt-1">Place an order from the menu tab to track it here.</p>
                 </div>
               ) : (
                 activeOrders.map(order => {
                   const pickupCode = activePickupCodes[order.id];
+                  const isPaying = actionLoading[order.id] === 'PAYING';
+                  const isRespondingAccept = actionLoading[`${order.id}_accept`] === 'RESPONDING';
+                  const isRespondingDecline = actionLoading[`${order.id}_decline`] === 'RESPONDING';
+
                   return (
                     <div key={order.id} className="bg-white rounded-3xl border border-slate-200 shadow-card p-6 space-y-4">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2">
@@ -609,18 +722,34 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
                           <p className="text-xs font-bold text-amber-900">
                             Seller suggested an alternative pickup time: {new Date(order.sellerSuggestedTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                           </p>
-                          <div className="flex gap-2">
+                          <div className="flex flex-wrap gap-2">
                             <button
                               onClick={() => handleRespondTime(order.id, true)}
-                              className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700"
+                              disabled={isRespondingAccept || isRespondingDecline}
+                              className="px-3.5 py-2 min-h-[44px] rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1.5"
+                              aria-busy={isRespondingAccept}
                             >
-                              Accept Suggested Time
+                              {isRespondingAccept ? (
+                                <>
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Accepting...
+                                </>
+                              ) : (
+                                'Accept Suggested Time'
+                              )}
                             </button>
                             <button
                               onClick={() => handleRespondTime(order.id, false)}
-                              className="px-3 py-1.5 rounded-xl bg-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-300"
+                              disabled={isRespondingAccept || isRespondingDecline}
+                              className="px-3.5 py-2 min-h-[44px] rounded-xl bg-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-300 disabled:opacity-50 flex items-center gap-1.5"
+                              aria-busy={isRespondingDecline}
                             >
-                              Decline & Cancel
+                              {isRespondingDecline ? (
+                                <>
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Declining...
+                                </>
+                              ) : (
+                                'Decline & Cancel'
+                              )}
                             </button>
                           </div>
                         </div>
@@ -628,16 +757,26 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
 
                       {/* Payment Required Card */}
                       {order.status === 'ACCEPTED' && order.paymentStatus === 'PENDING' && (
-                        <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 flex items-center justify-between">
+                        <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                           <div>
                             <p className="text-xs font-bold text-deep-blue">Payment Required</p>
                             <p className="text-[11px] text-slate-600">Seller accepted your order time. Complete payment via Razorpay.</p>
                           </div>
                           <button
                             onClick={() => handlePayOrder(order.id)}
-                            className="btn-tactile px-4 py-2 rounded-xl bg-deep-blue text-white text-xs font-bold hover:opacity-95 flex items-center gap-1.5"
+                            disabled={isPaying}
+                            className="btn-tactile px-4 py-2 min-h-[44px] rounded-xl bg-deep-blue text-white text-xs font-bold hover:opacity-95 disabled:opacity-50 flex items-center gap-1.5 focus:outline-none focus:ring-2 focus:ring-primary-blue"
+                            aria-busy={isPaying}
                           >
-                            <CreditCard className="w-3.5 h-3.5" /> Pay ₹{order.totalAmount}
+                            {isPaying ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Processing...
+                              </>
+                            ) : (
+                              <>
+                                <CreditCard className="w-3.5 h-3.5" /> Pay ₹{order.totalAmount}
+                              </>
+                            )}
                           </button>
                         </div>
                       )}
@@ -672,8 +811,9 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
           {ordersTab === 'HISTORY' && (
             <div className="space-y-3">
               {previousOrders.length === 0 ? (
-                <div className="bg-white rounded-3xl border border-slate-200 p-8 text-center text-slate-500 text-xs">
-                  No previous orders
+                <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center text-slate-500 text-xs">
+                  <History className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                  No previous orders in history.
                 </div>
               ) : (
                 previousOrders.map(order => (

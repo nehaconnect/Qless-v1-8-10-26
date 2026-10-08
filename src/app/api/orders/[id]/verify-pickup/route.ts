@@ -16,7 +16,8 @@ export async function POST(
       return NextResponse.json({ error: '4-character pickup code is required' }, { status: 400 });
     }
 
-    const result = await sellerVerifyPickup(orderId, authUser.id, pickupCode);
+    const sellerCanteen = authUser.effectiveRole === 'ADMIN' ? undefined : authUser.canteenId;
+    const result = await sellerVerifyPickup(orderId, authUser.id, pickupCode, sellerCanteen);
 
     return NextResponse.json({ success: true, order: result.order });
   } catch (err: any) {

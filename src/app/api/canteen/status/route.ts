@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { canteenId, operatingStatus, openingTime, closingTime, defaultBatchCapacity } = body;
 
-    const targetCanteenId = user.canteenId || canteenId;
+    const targetCanteenId = user.effectiveRole === 'ADMIN' ? (canteenId || user.canteenId) : user.canteenId;
     if (!targetCanteenId) {
       return NextResponse.json({ error: 'Canteen ID required' }, { status: 400 });
     }

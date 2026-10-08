@@ -164,8 +164,8 @@ export async function createOrder(input: CreateOrderInput) {
       throw new Error(`Item "${menuItem.name}" is currently SOLD OUT`);
     }
 
-    if (it.quantity <= 0) {
-      throw new Error(`Invalid quantity for "${menuItem.name}"`);
+    if (!Number.isInteger(it.quantity) || it.quantity <= 0 || it.quantity > 50) {
+      throw new Error(`Invalid quantity for "${menuItem.name}". Quantity must be an integer between 1 and 50.`);
     }
 
     const priceNum = parseFloat(menuItem.price);
@@ -300,12 +300,15 @@ export async function createOrder(input: CreateOrderInput) {
 /**
  * Seller accepts the requested pickup time
  */
-export async function sellerAcceptOrder(orderId: string, sellerUserId: string) {
+export async function sellerAcceptOrder(orderId: string, sellerUserId: string, sellerCanteenId?: string) {
   const order = await db.query.orders.findFirst({
     where: eq(orders.id, orderId)
   });
 
   if (!order) throw new Error('Order not found');
+  if (sellerCanteenId && order.canteenId !== sellerCanteenId) {
+    throw new Error('Forbidden: Cannot accept orders for another canteen');
+  }
   if (order.status !== 'REQUESTED') {
     throw new Error(`Cannot accept order in status ${order.status}`);
   }
@@ -346,12 +349,15 @@ export async function sellerAcceptOrder(orderId: string, sellerUserId: string) {
 /**
  * Seller suggests another pickup time
  */
-export async function sellerSuggestTime(orderId: string, sellerUserId: string, suggestedTime: Date, note?: string) {
+export async function sellerSuggestTime(orderId: string, sellerUserId: string, suggestedTime: Date, note?: string, sellerCanteenId?: string) {
   const order = await db.query.orders.findFirst({
     where: eq(orders.id, orderId)
   });
 
   if (!order) throw new Error('Order not found');
+  if (sellerCanteenId && order.canteenId !== sellerCanteenId) {
+    throw new Error('Forbidden: Cannot suggest time for another canteen');
+  }
 
   const [updated] = await db.update(orders)
     .set({
@@ -462,7 +468,16 @@ export async function confirmOrderPayment(params: {
   providerOrderId: string;
   signature?: string;
 }) {
-  const { orderId, customerId, providerPaymentId, providerOrderId } = params;
+  const { orderId, customerId, providerPaymentId, providerOrderId, signature } = params;
+
+  if (process.env.RAZORPAY_KEY_SECRET && signature) {
+    const expectedSig = crypto.createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
+      .update(`${providerOrderId}|${providerPaymentId}`)
+      .digest('hex');
+    if (expectedSig !== signature) {
+      throw new Error('Invalid payment signature');
+    }
+  }
 
   const order = await db.query.orders.findFirst({
     where: and(eq(orders.id, orderId), eq(orders.customerId, customerId))
@@ -519,7 +534,15 @@ export async function confirmOrderPayment(params: {
 /**
  * Seller begins preparation for a batch
  */
-export async function sellerStartPreparingBatch(batchId: string, sellerUserId: string) {
+export async function sellerStartPreparingBatch(batchId: string, sellerUserId: string, sellerCanteenId?: string) {
+  const batch = await db.query.pickupBatches.findFirst({
+    where: eq(pickupBatches.id, batchId)
+  });
+  if (!batch) throw new Error('Batch not found');
+  if (sellerCanteenId && batch.canteenId !== sellerCanteenId) {
+    throw new Error('Forbidden: Cannot start preparation for another canteen');
+  }
+
   return await db.transaction(async (tx) => {
     await tx.update(pickupBatches)
       .set({ status: 'PREPARING', prepStartedAt: new Date() })
@@ -559,12 +582,15 @@ export async function sellerStartPreparingBatch(batchId: string, sellerUserId: s
 /**
  * Seller marks an order or entire batch READY
  */
-export async function sellerMarkOrderReady(orderId: string, sellerUserId: string) {
+export async function sellerMarkOrderReady(orderId: string, sellerUserId: string, sellerCanteenId?: string) {
   const order = await db.query.orders.findFirst({
     where: eq(orders.id, orderId)
   });
 
   if (!order) throw new Error('Order not found');
+  if (sellerCanteenId && order.canteenId !== sellerCanteenId) {
+    throw new Error('Forbidden: Cannot mark ready for another canteen');
+  }
 
   const [ready] = await db.update(orders)
     .set({ status: 'READY', readyAt: new Date(), updatedAt: new Date() })
@@ -599,8 +625,16 @@ function txOrDb(client: any) {
  * Seller verifies customer 4-character pickup code
  * Rate-limited with temporary lockout to prevent brute-force attacks
  */
-export async function sellerVerifyPickup(orderId: string, sellerUserId: string, enteredCode: string) {
+export async function sellerVerifyPickup(orderId: string, sellerUserId: string, enteredCode: string, sellerCanteenId?: string) {
   return await db.transaction(async (tx) => {
+    const order = await tx.query.orders.findFirst({
+      where: eq(orders.id, orderId)
+    });
+    if (!order) throw new Error('Order not found');
+    if (sellerCanteenId && order.canteenId !== sellerCanteenId) {
+      throw new Error('Forbidden: Cannot verify pickup for another canteen');
+    }
+
     const pc = await tx.query.pickupCodes.findFirst({
       where: eq(pickupCodes.orderId, orderId)
     });
@@ -615,8 +649,11 @@ export async function sellerVerifyPickup(orderId: string, sellerUserId: string, 
     }
 
     const calculatedHash = hashPickupCode(enteredCode.trim(), orderId);
+    const bufCalc = Buffer.from(calculatedHash, 'utf-8');
+    const bufExpected = Buffer.from(pc.codeHash, 'utf-8');
+    const isMatch = bufCalc.length === bufExpected.length && crypto.timingSafeEqual(bufCalc, bufExpected);
 
-    if (calculatedHash !== pc.codeHash) {
+    if (!isMatch) {
       const newAttempts = pc.failedAttempts + 1;
       let lockedUntil: Date | null = null;
 

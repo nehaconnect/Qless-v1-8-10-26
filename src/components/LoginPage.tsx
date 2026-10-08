@@ -284,7 +284,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="btn-tactile w-full mt-2 py-3.5 px-4 rounded-xl text-white font-bold text-sm bg-gradient-to-r from-deep-blue to-primary-blue shadow-soft hover:shadow-tactile hover:opacity-95 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-blue disabled:opacity-50 flex items-center justify-center gap-2"
+                className="btn-tactile w-full mt-2 py-3.5 min-h-[44px] px-4 rounded-xl text-white font-bold text-sm bg-gradient-to-r from-deep-blue to-primary-blue shadow-soft hover:shadow-tactile hover:opacity-95 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-blue disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {isLoading ? (
                   <>
@@ -435,7 +435,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="btn-tactile w-full mt-2 py-3 px-4 rounded-xl text-white font-bold text-sm bg-gradient-to-r from-deep-blue to-primary-blue shadow-soft hover:shadow-tactile hover:opacity-95 focus:outline-none disabled:opacity-50 flex items-center justify-center gap-2"
+                className="btn-tactile w-full mt-2 py-3.5 min-h-[44px] px-4 rounded-xl text-white font-bold text-sm bg-gradient-to-r from-deep-blue to-primary-blue shadow-soft hover:shadow-tactile hover:opacity-95 focus:outline-none disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {isLoading ? (
                   <>

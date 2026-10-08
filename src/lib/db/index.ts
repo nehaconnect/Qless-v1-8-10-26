@@ -5,7 +5,7 @@ import * as dotenv from 'dotenv';
 
 dotenv.config({ path: '.env.local' });
 
-// Global cached pool to avoid connection exhaustion in Next.js dev hot-reloads
+// Global cached pool to avoid connection exhaustion in Next.js and Vercel serverless containers
 declare global {
   var _qlessPgPool: pg.Pool | undefined;
 }
@@ -19,13 +19,12 @@ if (!connectionString) {
 export const pool = globalThis._qlessPgPool ?? new pg.Pool({
   connectionString,
   ssl: { rejectUnauthorized: false },
-  max: 10,
-  idleTimeoutMillis: 30000,
+  max: 20,
+  connectionTimeoutMillis: 5000,
+  idleTimeoutMillis: 10000,
 });
 
-if (process.env.NODE_ENV !== 'production') {
-  globalThis._qlessPgPool = pool;
-}
+globalThis._qlessPgPool = pool;
 
 export const db = drizzle(pool, { schema });
 export * from './schema';

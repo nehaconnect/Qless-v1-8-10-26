@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, orders, orderItems, pickupBatches, canteens, user } from '@/lib/db';
-import { eq, desc, and } from 'drizzle-orm';
+import { eq, desc, and, inArray } from 'drizzle-orm';
 import { requireAuth } from '@/lib/auth/server';
 import { createOrder } from '@/lib/services/order-service';
 
@@ -18,9 +18,6 @@ export async function GET(req: NextRequest) {
       orderList = await db.query.orders.findMany({
         where: eq(orders.customerId, authUser.id),
         orderBy: [desc(orders.createdAt)],
-        with: {
-          // Relational query helper if configured, or manual joins
-        }
       });
     } else if (authUser.effectiveRole === 'SELLER') {
       // Seller sees orders belonging to their canteen
@@ -43,21 +40,49 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    // Attach order items, customer name, and batch info
-    const enrichedOrders = await Promise.all(
-      orderList.map(async (ord) => {
-        const items = await db.select().from(orderItems).where(eq(orderItems.orderId, ord.id));
-        const batch = await db.query.pickupBatches.findFirst({ where: eq(pickupBatches.id, ord.batchId) });
-        const customer = await db.query.user.findFirst({ where: eq(user.id, ord.customerId) });
-        return {
-          ...ord,
-          items,
-          batch,
-          customerName: customer?.name || 'Customer',
-          customerPhone: customer?.phoneNumber || '',
-        };
-      })
-    );
+    if (orderList.length === 0) {
+      return NextResponse.json({ orders: [] });
+    }
+
+    // Attach order items, customer name, and batch info via bulk inArray queries (prevents N+1 pool exhaustion)
+    const orderIds = orderList.map((o) => o.id);
+    const batchIds = [...new Set(orderList.map((o) => o.batchId).filter(Boolean))] as string[];
+    const customerIds = [...new Set(orderList.map((o) => o.customerId).filter(Boolean))] as string[];
+
+    const [allItems, allBatches, allCustomers] = await Promise.all([
+      db.select().from(orderItems).where(inArray(orderItems.orderId, orderIds)),
+      batchIds.length > 0
+        ? db.select().from(pickupBatches).where(inArray(pickupBatches.id, batchIds))
+        : Promise.resolve([]),
+      customerIds.length > 0
+        ? db.select({ id: user.id, name: user.name, phoneNumber: user.phoneNumber }).from(user).where(inArray(user.id, customerIds))
+        : Promise.resolve([]),
+    ]);
+
+    const itemsByOrder = new Map<string, any[]>();
+    for (const it of allItems) {
+      const arr = itemsByOrder.get(it.orderId) || [];
+      arr.push(it);
+      itemsByOrder.set(it.orderId, arr);
+    }
+
+    const batchById = new Map<string, any>();
+    for (const b of allBatches) {
+      batchById.set(b.id, b);
+    }
+
+    const customerById = new Map<string, any>();
+    for (const c of allCustomers) {
+      customerById.set(c.id, c);
+    }
+
+    const enrichedOrders = orderList.map((ord) => ({
+      ...ord,
+      items: itemsByOrder.get(ord.id) || [],
+      batch: batchById.get(ord.batchId) || null,
+      customerName: customerById.get(ord.customerId)?.name || 'Customer',
+      customerPhone: customerById.get(ord.customerId)?.phoneNumber || '',
+    }));
 
     return NextResponse.json({ orders: enrichedOrders });
   } catch (err: any) {

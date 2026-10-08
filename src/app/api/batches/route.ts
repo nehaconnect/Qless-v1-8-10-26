@@ -54,6 +54,10 @@ export async function PATCH(req: NextRequest) {
         throw new Error('Preparation batch not found');
       }
 
+      if (user.effectiveRole !== 'ADMIN' && batch.canteenId !== user.canteenId) {
+        throw new Error('Forbidden: You can only adjust capacity for your own canteen.');
+      }
+
       if (newCapacity < batch.reservedCount) {
         throw new Error(
           `Cannot reduce capacity to ${newCapacity} because ${batch.reservedCount} orders are already committed to this batch.`

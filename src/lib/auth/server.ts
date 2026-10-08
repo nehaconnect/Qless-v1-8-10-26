@@ -13,6 +13,7 @@ export interface AuthenticatedUser {
   effectiveRole: 'CUSTOMER' | 'SELLER' | 'ADMIN'; // When admin uses View-As support mode
   canteenId?: string; // For seller
   collegeId?: string;
+  sellerApprovalStatus?: string;
 }
 
 export async function getSessionUser(): Promise<AuthenticatedUser | null> {
@@ -28,12 +29,14 @@ export async function getSessionUser(): Promise<AuthenticatedUser | null> {
     const u = session.user as any;
     let canteenId: string | undefined;
     let collegeId: string | undefined;
+    let sellerApprovalStatus: string | undefined;
 
     if (u.role === 'SELLER') {
       const sp = await db.query.sellerProfiles.findFirst({
         where: eq(sellerProfiles.userId, u.id)
       });
       canteenId = sp?.canteenId;
+      sellerApprovalStatus = sp?.approvalStatus;
     } else if (u.role === 'CUSTOMER') {
       const cp = await db.query.customerProfiles.findFirst({
         where: eq(customerProfiles.userId, u.id)
@@ -56,7 +59,8 @@ export async function getSessionUser(): Promise<AuthenticatedUser | null> {
       role: u.role as 'CUSTOMER' | 'SELLER' | 'ADMIN',
       effectiveRole,
       canteenId,
-      collegeId
+      collegeId,
+      sellerApprovalStatus,
     };
   } catch (err) {
     return null;
@@ -83,6 +87,9 @@ export async function requireSeller(): Promise<AuthenticatedUser> {
   const user = await requireAuth();
   if (user.role !== 'SELLER' && user.role !== 'ADMIN') {
     throw new Error("FORBIDDEN: Seller access required");
+  }
+  if (user.role === 'SELLER' && user.sellerApprovalStatus !== 'APPROVED') {
+    throw new Error("FORBIDDEN: Seller account is pending approval by administrator");
   }
   return user;
 }
