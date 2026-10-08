@@ -19,10 +19,18 @@ if (!connectionString) {
 export const pool = globalThis._qlessPgPool ?? new pg.Pool({
   connectionString,
   ssl: { rejectUnauthorized: false },
-  max: 20,
-  connectionTimeoutMillis: 5000,
-  idleTimeoutMillis: 10000,
+  max: 10,
+  connectionTimeoutMillis: 10000,
+  idleTimeoutMillis: 30000,
+  keepAlive: true,
 });
+
+if (!globalThis._qlessPgPool) {
+  pool.on('error', (err) => {
+    // Prevent unhandled errors from terminating the process on idle Neon socket disconnects
+    console.warn('Neon PG pool idle client warning:', err?.message || err);
+  });
+}
 
 globalThis._qlessPgPool = pool;
 

@@ -98,11 +98,30 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
+  const [canteensList, setCanteensList] = useState<any[]>([]);
+  const [selectedCanteenId, setSelectedCanteenId] = useState<string>('');
+
+  // Fetch Available Canteens
+  const fetchCanteens = async () => {
+    try {
+      const res = await fetch('/api/canteens');
+      const data = await res.json();
+      if (data.canteens && Array.isArray(data.canteens)) {
+        setCanteensList(data.canteens);
+        if (data.canteens.length > 0 && !selectedCanteenId) {
+          setSelectedCanteenId(data.canteens[0].id);
+        }
+      }
+    } catch {}
+  };
+
   // Fetch Menu
-  const fetchMenu = async (isInitial = false) => {
+  const fetchMenu = async (isInitial = false, canteenIdOverride?: string) => {
     try {
       if (isInitial) setIsLoadingMenu(true);
-      const res = await fetch('/api/menu');
+      const targetId = canteenIdOverride || selectedCanteenId;
+      const url = targetId ? `/api/menu?canteenId=${targetId}` : '/api/menu';
+      const res = await fetch(url);
       const data = await res.json();
       if (data.categories) setCategories(data.categories);
       if (data.items) setMenuItems(data.items);
@@ -128,9 +147,9 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
   };
 
   useEffect(() => {
+    fetchCanteens();
     fetchMenu(true);
     fetchOrders(true);
-    // 20s balanced interval to avoid connection exhaustion
     const interval = setInterval(() => {
       fetchOrders(false);
       fetchMenu(false);
@@ -138,24 +157,34 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
     return () => clearInterval(interval);
   }, []);
 
-  // Update calculated 15-minute batch preview whenever user picks an arbitrary minute
+  // When selected canteen changes, reload menu and reset cart
+  const handleSelectCanteen = (cId: string) => {
+    setSelectedCanteenId(cId);
+    setCart([]);
+    setSelectedCategory('ALL');
+    fetchMenu(true, cId);
+  };
+
+  // Update calculated 15-minute batch preview (Strict 24-hour format, NO AM/PM)
   useEffect(() => {
     const [hStr, mStr] = selectedTimeStr.split(':');
     const h = parseInt(hStr, 10);
     const m = parseInt(mStr, 10);
 
-    const batchStartMin = Math.floor(m / 15) * 15;
-    const batchEndMin = batchStartMin === 45 ? 0 : batchStartMin + 15;
-    const batchEndHour = batchStartMin === 45 ? h + 1 : h;
+    let batchStartMin = Math.floor(m / 15) * 15;
+    let batchEndMin = batchStartMin === 45 ? 0 : batchStartMin + 15;
+    let batchEndHour = batchStartMin === 45 ? h + 1 : h;
+    let effectiveHour = h;
+
+    if (h === 17 && m === 0) {
+      effectiveHour = 16;
+      batchStartMin = 45;
+      batchEndHour = 17;
+      batchEndMin = 0;
+    }
 
     const pad = (n: number) => n.toString().padStart(2, '0');
-    const formatAmPm = (hour: number, min: number) => {
-      const ampm = hour >= 12 ? 'PM' : 'AM';
-      const displayH = hour % 12 === 0 ? 12 : hour % 12;
-      return `${displayH}:${pad(min)} ${ampm}`;
-    };
-
-    setCalculatedBatch(`${formatAmPm(h, batchStartMin)}–${formatAmPm(batchEndHour, batchEndMin)}`);
+    setCalculatedBatch(`${pad(effectiveHour)}:${pad(batchStartMin)}–${pad(batchEndHour)}:${pad(batchEndMin)}`);
   }, [selectedTimeStr]);
 
   // Cart operations
@@ -198,6 +227,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
       const exactPickupISO = `${todayStr}T${selectedTimeStr}:00.000Z`;
 
       const payload = {
+        canteenId: selectedCanteenId || undefined,
         items: cart.map(ci => ({
           menuItemId: ci.item.id,
           quantity: ci.quantity,
@@ -315,6 +345,21 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
   const activeOrders = ordersList.filter(o => !['COLLECTED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(o.status));
   const previousOrders = ordersList.filter(o => ['COLLECTED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(o.status));
 
+  const format24Time = (isoString?: string | null) => {
+    if (!isoString) return '--:--';
+    try {
+      const d = new Date(isoString);
+      return d.toLocaleTimeString('en-GB', {
+        timeZone: 'Asia/Kolkata',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      });
+    } catch {
+      return '--:--';
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       {/* Canteen Status Banner */}
@@ -333,7 +378,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
           <AlertCircle className="w-5 h-5 text-rose-600 flex-shrink-0" />
           <div>
             <p className="font-bold">Canteen Closed</p>
-            <p className="text-xs text-rose-700 font-normal mt-0.5">Operating hours are 8:00 AM – 5:00 PM. New orders are disabled.</p>
+            <p className="text-xs text-rose-700 font-normal mt-0.5">Operating hours are 08:00 – 17:00 (24h). New orders are disabled.</p>
           </div>
         </div>
       )}
@@ -349,6 +394,29 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
         <div className="mb-4 p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center justify-between">
           <span>{successMsg}</span>
           <button onClick={() => setSuccessMsg(null)} className="p-1"><X className="w-4 h-4" /></button>
+        </div>
+      )}
+
+      {/* Canteen Switcher (when multiple canteens exist) */}
+      {canteensList.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2 mb-6 p-2.5 bg-slate-100/90 rounded-2xl border border-slate-200">
+          <div className="flex items-center gap-1.5 text-xs font-black text-slate-700 mr-1">
+            <Coffee className="w-4 h-4 text-primary-blue" />
+            <span>Select Canteen:</span>
+          </div>
+          {canteensList.map(c => (
+            <button
+              key={c.id}
+              onClick={() => handleSelectCanteen(c.id)}
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-extrabold transition min-h-[36px] ${
+                selectedCanteenId === c.id
+                  ? 'bg-deep-blue text-white shadow-sm'
+                  : 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200/80'
+              }`}
+            >
+              {c.name}
+            </button>
+          ))}
         </div>
       )}
 
@@ -720,7 +788,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
                       {order.timeNegotiationStatus === 'SUGGESTED_BY_SELLER' && order.sellerSuggestedTime && (
                         <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 space-y-2">
                           <p className="text-xs font-bold text-amber-900">
-                            Seller suggested an alternative pickup time: {new Date(order.sellerSuggestedTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            Seller suggested an alternative pickup time: {format24Time(order.sellerSuggestedTime)}
                           </p>
                           <div className="flex flex-wrap gap-2">
                             <button
@@ -781,10 +849,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
                         </div>
                       )}
 
-                      {/* Pickup Code Card (when available / ready) */}
-                      {pickupCode && (
-                        <div className="p-4 rounded-2xl bg-gradient-to-r from-soft-blue to-soft-lavender border border-blue-200 text-center">
-                          <p className="text-xs font-bold text-deep-blue uppercase tracking-wider">Your Pickup Code</p>
+                      {/* Pickup Code Card (ONLY shown after verified payment: CONFIRMED, PREPARING, READY) */}
+                      {pickupCode && ['CONFIRMED', 'PREPARING', 'READY'].includes(order.status) && (
+                        <div className="p-4 rounded-2xl bg-gradient-to-r from-soft-blue to-soft-lavender border border-blue-200 text-center animate-fadeIn">
+                          <p className="text-xs font-bold text-deep-blue uppercase tracking-wider">Your 4-Character Pickup Code</p>
                           <p className="text-3xl font-black text-deep-blue tracking-widest my-1">{pickupCode}</p>
                           <p className="text-[11px] text-slate-600">Show this 4-character code at the pickup counter when food is ready.</p>
                         </div>
