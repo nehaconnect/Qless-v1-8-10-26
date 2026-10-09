@@ -284,8 +284,8 @@ export const Navbar: React.FC<NavbarProps> = ({
                       id="navbar-sign-out-btn"
                       disabled={isLoggingOut}
                       onClick={async () => {
-                        setShowProfileMenu(false);
                         await onLogout();
+                        setShowProfileMenu(false);
                       }}
                       className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-bold text-danger hover:bg-rose-50 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition mt-2 min-h-[44px]"
                     >

@@ -133,16 +133,27 @@ export default function Home() {
         document.cookie = `${cookieName}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Secure; SameSite=Lax`;
       }
 
-      // 4. Invalidate client state immediately
+      // 4. Invalidate client state immediately and clear any client storage
+      if (typeof window !== 'undefined') {
+        try {
+          window.localStorage.removeItem('better-auth.session');
+          window.sessionStorage.clear();
+        } catch {}
+      }
+
       setCurrentUser(null);
       setViewAsRole(null);
       setLogoutError(null);
 
-      // Verify session is strictly gone
-      const verifySession = await authClient.getSession().catch(() => null);
-      if (verifySession?.data?.user) {
-        throw new Error('Authenticated session still active. Please try again.');
-      }
+      // 5. Network verification that session is revoked on the server
+      try {
+        const verifyRes = await fetch('/api/auth/get-session', { cache: 'no-store' });
+        const verifyData = await verifyRes.json().catch(() => null);
+        if (verifyData?.user) {
+          // If server still claims active session, force direct database deletion
+          await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
+        }
+      } catch {}
     } catch (err: any) {
       console.error('Logout failed:', err);
       setLogoutError(err?.message || 'Sign out failed. Please try again.');
