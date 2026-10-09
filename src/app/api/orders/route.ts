@@ -3,6 +3,7 @@ import { db, orders, orderItems, pickupBatches, canteens, user, pickupCodes } fr
 import { eq, desc, and, inArray } from 'drizzle-orm';
 import { requireAuth } from '@/lib/auth/server';
 import { createOrder, decryptPickupCode, format12HourIST } from '@/lib/services/order-service';
+import { toCanonicalPickupTime, formatPickupTimeDisplay } from '@/lib/pickup-time';
 
 export async function GET(req: NextRequest) {
   try {
@@ -106,6 +107,12 @@ export async function GET(req: NextRequest) {
 
       return {
         ...ord,
+        exactPickupTime: ord.exactPickupTime ? ord.exactPickupTime.toISOString() : null,
+        exactPickupTimeCanonical: ord.exactPickupTime ? toCanonicalPickupTime(ord.exactPickupTime) : null,
+        exactPickupTimeFormatted: ord.exactPickupTime ? formatPickupTimeDisplay(ord.exactPickupTime) : '--:--',
+        sellerSuggestedTime: ord.sellerSuggestedTime ? ord.sellerSuggestedTime.toISOString() : null,
+        sellerSuggestedTimeCanonical: ord.sellerSuggestedTime ? toCanonicalPickupTime(ord.sellerSuggestedTime) : null,
+        sellerSuggestedTimeFormatted: ord.sellerSuggestedTime ? formatPickupTimeDisplay(ord.sellerSuggestedTime) : null,
         items: itemsByOrder.get(ord.id) || [],
         batch: batchById.get(ord.batchId) || null,
         customerName: customerById.get(ord.customerId)?.name || 'Customer',
