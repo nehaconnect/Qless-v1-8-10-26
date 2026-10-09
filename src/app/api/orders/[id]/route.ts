@@ -10,6 +10,10 @@ import {
   sellerMarkOrderReady,
   decryptPickupCode,
 } from '@/lib/services/order-service';
+import {
+  toCanonicalPickupTime,
+  formatPickupTimeDisplay,
+} from '@/lib/pickup-time';
 
 export async function GET(
   req: NextRequest,
@@ -61,6 +65,12 @@ export async function GET(
     return NextResponse.json({
       order: {
         ...order,
+        exactPickupTime: order.exactPickupTime ? order.exactPickupTime.toISOString() : null,
+        exactPickupTimeCanonical: order.exactPickupTime ? toCanonicalPickupTime(order.exactPickupTime) : null,
+        exactPickupTimeFormatted: order.exactPickupTime ? formatPickupTimeDisplay(order.exactPickupTime) : '--:--',
+        sellerSuggestedTime: order.sellerSuggestedTime ? order.sellerSuggestedTime.toISOString() : null,
+        sellerSuggestedTimeCanonical: order.sellerSuggestedTime ? toCanonicalPickupTime(order.sellerSuggestedTime) : null,
+        sellerSuggestedTimeFormatted: order.sellerSuggestedTime ? formatPickupTimeDisplay(order.sellerSuggestedTime) : null,
         items,
         history,
         batch,
@@ -110,7 +120,7 @@ export async function PATCH(
         if (!suggestedTime) {
           return NextResponse.json({ error: 'Suggested time is required' }, { status: 400 });
         }
-        result = await sellerSuggestTime(orderId, authUser.id, new Date(suggestedTime), note, sellerCanteen);
+        result = await sellerSuggestTime(orderId, authUser.id, suggestedTime, note, sellerCanteen);
         break;
 
       case 'CUSTOMER_RESPOND_TIME':

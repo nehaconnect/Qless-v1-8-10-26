@@ -2,6 +2,14 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import {
+  hourMinuteAmpmToCanonical,
+  validatePickupTimeCanonical,
+  formatPickupTimeDisplay,
+  formatCanonicalTo12Hour,
+  calculate15MinBatch,
+  parseTimeToMinutes,
+} from '@/lib/pickup-time';
+import {
   ShoppingBag,
   Clock,
   CheckCircle2,
@@ -53,6 +61,7 @@ interface Order {
   batchId: string;
   customerName: string;
   customerPhone?: string;
+  rejectionNote?: string | null;
   batch: { id: string; displayLabel: string; startTime: string; endTime: string } | null;
   items: OrderItem[];
   createdAt: string;
@@ -123,10 +132,28 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   const [ordersFilter, setOrdersFilter] = useState<'REQUESTED' | 'ACTIVE' | 'ALL'>('REQUESTED');
   const [expandedBatches, setExpandedBatches] = useState<Record<string, boolean>>({});
 
-  // Time Suggestion Modal
+  // Controlled Time Suggestion Modal State
   const [suggestOrderId, setSuggestOrderId] = useState<string | null>(null);
-  const [suggestTimeStr, setSuggestTimeStr] = useState('11:30');
+  const [suggestHour, setSuggestHour] = useState<string>('1');
+  const [suggestMinute, setSuggestMinute] = useState<string>('30');
+  const [suggestAmpm, setSuggestAmpm] = useState<'AM' | 'PM'>('PM');
   const [suggestNote, setSuggestNote] = useState('');
+
+  // Derived Canonical Time (HH:mm 24-hour zero padded) & Validation
+  const canonicalSuggestTime = useMemo(() => {
+    const h = parseInt(suggestHour, 10) || 12;
+    const m = parseInt(suggestMinute, 10) || 0;
+    return hourMinuteAmpmToCanonical(h, m, suggestAmpm);
+  }, [suggestHour, suggestMinute, suggestAmpm]);
+
+  const suggestValidation = useMemo(() => {
+    return validatePickupTimeCanonical(canonicalSuggestTime);
+  }, [canonicalSuggestTime]);
+
+  const suggestBatch = useMemo(() => {
+    if (!suggestValidation.valid) return null;
+    return calculate15MinBatch(canonicalSuggestTime);
+  }, [canonicalSuggestTime, suggestValidation.valid]);
 
   // Reject Order Modal
   const [rejectOrderId, setRejectOrderId] = useState<string | null>(null);
@@ -270,8 +297,31 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
     }
   };
 
+  const openSuggestModal = (order: Order) => {
+    setSuggestOrderId(order.id);
+    setSuggestNote(order.rejectionNote || '');
+    const timeToParse = order.sellerSuggestedTime || order.exactPickupTime;
+    const parsed = parseTimeToMinutes(timeToParse);
+    if (parsed) {
+      const h12 = parsed.hours % 12 === 0 ? 12 : parsed.hours % 12;
+      const ampm = parsed.hours >= 12 ? 'PM' : 'AM';
+      const mStr = parsed.minutes.toString().padStart(2, '0');
+      setSuggestHour(h12.toString());
+      setSuggestMinute(mStr);
+      setSuggestAmpm(ampm as 'AM' | 'PM');
+    } else {
+      setSuggestHour('1');
+      setSuggestMinute('30');
+      setSuggestAmpm('PM');
+    }
+  };
+
   const handleSuggestTime = async () => {
     if (!suggestOrderId || actionLoading[suggestOrderId]) return;
+    if (!suggestValidation.valid) {
+      setPortalError(suggestValidation.error || 'Invalid pickup time');
+      return;
+    }
     clearMessages();
     setActionLoading(prev => ({ ...prev, [suggestOrderId]: 'SUGGESTING' }));
 
@@ -281,13 +331,13 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'SELLER_SUGGEST_TIME',
-          suggestedTime: suggestTimeStr,
-          note: suggestNote,
+          suggestedTime: canonicalSuggestTime,
+          note: suggestNote.trim() || undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to suggest time.');
-      setPortalSuccess(`Proposed pickup time (${suggestTimeStr}) sent to customer.`);
+      setPortalSuccess(`Proposed pickup time (${suggestValidation.displayTime}) sent to customer.`);
       setSuggestOrderId(null);
       setSuggestNote('');
       await refreshData(false);
@@ -760,19 +810,8 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
     return menuItems.filter(m => m.categoryId === menuFilterCategory);
   }, [menuItems, menuFilterCategory]);
 
-  const format12Time = (isoString?: string | null) => {
-    if (!isoString) return '--:--';
-    try {
-      const d = new Date(isoString);
-      return d.toLocaleTimeString('en-US', {
-        timeZone: 'Asia/Kolkata',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true,
-      });
-    } catch {
-      return '--:--';
-    }
+  const format12Time = (isoString?: string | Date | null) => {
+    return formatPickupTimeDisplay(isoString);
   };
 
   const canteenDisplayName = canteenData?.name || `${user.name}'s Canteen`;
@@ -1254,6 +1293,16 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                           </span>
                                         </div>
 
+                                        {order.sellerSuggestedTime && order.timeNegotiationStatus === 'SUGGESTED_BY_SELLER' && (
+                                          <div className="mb-2.5 p-2 bg-amber-50 rounded-xl border border-amber-200/80 flex items-center justify-between text-xs">
+                                            <span className="text-[10px] text-amber-800 font-bold uppercase">Proposed by you:</span>
+                                            <span className="font-black text-amber-900 flex items-center gap-1">
+                                              <Clock className="w-3.5 h-3.5 text-amber-600" />
+                                              {formatPickupTimeDisplay(order.sellerSuggestedTime)}
+                                            </span>
+                                          </div>
+                                        )}
+
                                         {/* Items list */}
                                         <div className="space-y-1 py-1 text-xs">
                                           {order.items.map((it, idx) => (
@@ -1285,14 +1334,11 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                               Reject
                                             </button>
                                             <button
-                                              onClick={() => {
-                                                setSuggestOrderId(order.id);
-                                                setSuggestTimeStr('11:30');
-                                              }}
+                                              onClick={() => openSuggestModal(order)}
                                               disabled={isAccepting || isRejecting}
                                               className="py-2 px-1 rounded-xl text-[11px] font-bold bg-amber-50 text-amber-800 hover:bg-amber-100 transition min-h-[44px] disabled:opacity-50 flex items-center justify-center text-center leading-tight"
                                             >
-                                              Change Time
+                                              {order.sellerSuggestedTime ? 'Change Time' : 'Suggest Time'}
                                             </button>
                                             <button
                                               onClick={() => handleAcceptOrder(order.id)}
@@ -1910,50 +1956,183 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
           <div className="bg-surface rounded-3xl p-6 max-w-sm w-full border border-slate-200 shadow-xl animate-scaleUp">
             <h3 className="text-sm font-black text-text-primary">Suggest Different Pickup Time</h3>
             <p className="text-xs text-text-secondary mt-1">
-              Choose an alternative time (8:00 AM to 5:00 PM IST). Customer will review.
+              Choose an alternative time (8:00 AM to 5:00 PM IST). Customer will review and accept.
             </p>
 
-            <div className="mt-4 space-y-3">
+            <div className="mt-4 space-y-4">
+              {/* 3-Part Controlled Time Selector: Hour, Minute, AM/PM */}
               <div>
-                <label className="text-[11px] font-bold text-slate-600 block mb-1">
-                  Proposed Time (24h internal):
+                <label className="text-[11px] font-bold text-slate-700 block mb-1.5">
+                  Select Suggested Pickup Time:
                 </label>
-                <input
-                  type="time"
-                  min="08:00"
-                  max="17:00"
-                  value={suggestTimeStr}
-                  onChange={e => setSuggestTimeStr(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm font-mono font-bold focus:outline-none focus:border-primary-blue min-h-[44px]"
-                />
+                <div className="grid grid-cols-3 gap-2">
+                  {/* Hour Selector */}
+                  <div>
+                    <label htmlFor="suggest-hour-select" className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      Hour
+                    </label>
+                    <select
+                      id="suggest-hour-select"
+                      value={suggestHour}
+                      onChange={e => setSuggestHour(e.target.value)}
+                      className="w-full px-2.5 py-2.5 rounded-xl border-2 border-slate-200 text-sm font-bold bg-white focus:outline-none focus:border-primary-blue min-h-[44px]"
+                    >
+                      {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map(h => (
+                        <option key={h} value={h.toString()}>{h}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Minute Input / Selector */}
+                  <div>
+                    <label htmlFor="suggest-minute-input" className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      Minute
+                    </label>
+                    <input
+                      id="suggest-minute-input"
+                      type="number"
+                      min={0}
+                      max={59}
+                      value={suggestMinute}
+                      onChange={e => {
+                        const val = e.target.value;
+                        if (val === '') {
+                          setSuggestMinute('');
+                          return;
+                        }
+                        const num = Math.max(0, Math.min(59, parseInt(val, 10) || 0));
+                        setSuggestMinute(num.toString().padStart(2, '0'));
+                      }}
+                      onBlur={() => {
+                        if (!suggestMinute) setSuggestMinute('00');
+                        else setSuggestMinute(suggestMinute.padStart(2, '0'));
+                      }}
+                      className="w-full px-2.5 py-2.5 rounded-xl border-2 border-slate-200 text-sm font-mono font-bold text-center bg-white focus:outline-none focus:border-primary-blue min-h-[44px]"
+                    />
+                  </div>
+
+                  {/* AM / PM Toggle */}
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
+                      Period
+                    </span>
+                    <div className="flex rounded-xl border-2 border-slate-200 overflow-hidden min-h-[44px] bg-slate-100 p-0.5">
+                      <button
+                        type="button"
+                        id="suggest-period-am"
+                        onClick={() => setSuggestAmpm('AM')}
+                        className={`flex-1 py-1 text-xs font-black rounded-lg transition ${
+                          suggestAmpm === 'AM'
+                            ? 'bg-primary-blue text-white shadow-sm'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        AM
+                      </button>
+                      <button
+                        type="button"
+                        id="suggest-period-pm"
+                        onClick={() => setSuggestAmpm('PM')}
+                        className={`flex-1 py-1 text-xs font-black rounded-lg transition ${
+                          suggestAmpm === 'PM'
+                            ? 'bg-primary-blue text-white shadow-sm'
+                            : 'text-slate-600 hover:text-slate-900'
+                        }`}
+                      >
+                        PM
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Minute Quick Presets */}
+                <div className="flex items-center gap-1.5 mt-2">
+                  <span className="text-[10px] font-bold text-slate-400">Presets:</span>
+                  {['00', '15', '30', '45', '59'].map(m => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setSuggestMinute(m)}
+                      className={`px-2 py-0.5 text-[10px] font-mono font-bold rounded-md border transition ${
+                        suggestMinute === m
+                          ? 'bg-slate-800 text-white border-slate-800'
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      :{m}
+                    </button>
+                  ))}
+                </div>
               </div>
 
+              {/* Live Preview Card */}
+              <div className={`p-3 rounded-2xl border transition ${
+                suggestValidation.valid
+                  ? 'bg-blue-50/70 border-blue-200/80'
+                  : 'bg-rose-50/80 border-rose-200'
+              }`}>
+                <div className="flex items-center justify-between text-[11px]">
+                  <span className="font-bold text-slate-500">Internal Value (API):</span>
+                  <span className="font-mono font-black text-deep-blue bg-white px-2 py-0.5 rounded border border-slate-200">
+                    {canonicalSuggestTime}
+                  </span>
+                </div>
+
+                <div className="mt-2 flex items-baseline justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <Clock className="w-4 h-4 text-primary-blue" />
+                    <span className="text-sm font-black text-text-primary">
+                      {suggestValidation.displayTime}
+                    </span>
+                  </div>
+                  {suggestBatch && (
+                    <span className="text-[11px] font-bold text-primary-blue">
+                      Batch: {suggestBatch.displayLabel}
+                    </span>
+                  )}
+                </div>
+
+                {!suggestValidation.valid && (
+                  <div className="mt-2 text-[11px] font-bold text-rose-700 flex items-start gap-1">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>{suggestValidation.error}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Note to Customer */}
               <div>
-                <label className="text-[11px] font-bold text-slate-600 block mb-1">
+                <label htmlFor="suggest-note-input" className="text-[11px] font-bold text-slate-600 block mb-1">
                   Note to Customer (Optional):
                 </label>
                 <input
+                  id="suggest-note-input"
                   type="text"
-                  placeholder="e.g. Current slot is full, this time is ready faster"
+                  placeholder="e.g. Current slot is busy, this time is ready faster"
                   value={suggestNote}
                   onChange={e => setSuggestNote(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:outline-none min-h-[44px]"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs focus:outline-none focus:border-primary-blue min-h-[44px]"
                 />
               </div>
             </div>
 
             <div className="mt-6 flex items-center justify-end gap-2">
               <button
+                type="button"
                 onClick={() => setSuggestOrderId(null)}
                 className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 min-h-[44px]"
               >
                 Cancel
               </button>
               <button
+                type="button"
+                id="send-suggestion-button"
                 onClick={handleSuggestTime}
-                className="px-4 py-2 rounded-xl text-xs font-black bg-primary-blue hover:bg-blue-600 text-white shadow-tactile min-h-[44px]"
+                disabled={!suggestValidation.valid || Boolean(actionLoading[suggestOrderId || ''])}
+                className="px-4 py-2 rounded-xl text-xs font-black bg-primary-blue hover:bg-blue-600 text-white shadow-tactile min-h-[44px] disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
               >
-                Send Suggestion
+                {actionLoading[suggestOrderId || ''] && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>Send Suggestion</span>
               </button>
             </div>
           </div>

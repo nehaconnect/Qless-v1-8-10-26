@@ -1,6 +1,28 @@
 import { db, orders, orderItems, orderStatusHistory, pickupBatches, pickupCodes, menuItems, canteens, notifications, auditLogs, payments } from '@/lib/db';
 import { eq, and, sql, inArray } from 'drizzle-orm';
 import crypto from 'crypto';
+import {
+  getISTDateParts,
+  getISTTodayString,
+  toCanonicalPickupTime,
+  validatePickupTimeCanonical,
+  formatPickupTimeDisplay,
+  formatCanonicalTo12Hour,
+  calculate15MinBatch,
+  canonicalTimeToISTDate,
+} from '@/lib/pickup-time';
+
+// Re-export canonical helpers for consumers of order-service
+export {
+  getISTDateParts,
+  getISTTodayString,
+  toCanonicalPickupTime,
+  validatePickupTimeCanonical,
+  formatPickupTimeDisplay,
+  formatCanonicalTo12Hour,
+  calculate15MinBatch,
+  canonicalTimeToISTDate,
+};
 
 // 4-character uppercase alphanumeric character set (excluding confusing characters like 0, O, 1, I)
 const PICKUP_CHARS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
@@ -47,32 +69,6 @@ export function decryptPickupCode(encryptedStr?: string | null): string | null {
   }
 }
 
-/**
- * Reliable extraction of India Standard Time (IST, UTC+05:30) date parts
- * Guarantees correct campus local time regardless of server/cloud timezone
- */
-export function getISTDateParts(d: Date): { hours: number; minutes: number; dateStr: string } {
-  const formatter = new Intl.DateTimeFormat('en-GB', {
-    timeZone: 'Asia/Kolkata',
-    hour: 'numeric',
-    minute: 'numeric',
-    hour12: false,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
-  const parts = formatter.formatToParts(d);
-  let hours = 0, minutes = 0, year = '', month = '', day = '';
-  for (const p of parts) {
-    if (p.type === 'hour') hours = parseInt(p.value, 10);
-    if (p.type === 'minute') minutes = parseInt(p.value, 10);
-    if (p.type === 'year') year = p.value;
-    if (p.type === 'month') month = p.value;
-    if (p.type === 'day') day = p.value;
-  }
-  return { hours, minutes, dateStr: `${year}-${month}-${day}` };
-}
-
 export function format12HourTime(hours: number, minutes: number): string {
   const ampm = hours >= 12 ? 'PM' : 'AM';
   const displayH = hours % 12 === 0 ? 12 : hours % 12;
@@ -81,51 +77,41 @@ export function format12HourTime(hours: number, minutes: number): string {
 }
 
 export function format12HourIST(d: Date | string | null | undefined): string {
-  if (!d) return '--:--';
-  const dateObj = typeof d === 'string' ? new Date(d) : d;
-  if (isNaN(dateObj.getTime())) return '--:--';
-  return dateObj.toLocaleTimeString('en-US', {
-    timeZone: 'Asia/Kolkata',
-    hour: 'numeric',
-    minute: '2-digit',
-    hour12: true,
-  });
+  return formatPickupTimeDisplay(d);
 }
 
 /**
  * Validates whether an exact pickup time falls between 8:00 AM and 5:00 PM IST (inclusive)
+ * Accepts canonical 'HH:mm', 'h:mm A', ISO string, or Date.
  */
-export function validatePickupTime(exactPickupTime: Date | string): {
+export function validatePickupTime(exactPickupTime: Date | string | null | undefined): {
   valid: boolean;
   error?: string;
   minutesSinceMidnight?: number;
   pickupDate?: Date;
   istTimeFormatted?: string;
+  canonical?: string;
 } {
-  const d = typeof exactPickupTime === 'string' ? new Date(exactPickupTime) : exactPickupTime;
-  if (isNaN(d.getTime())) {
-    return { valid: false, error: 'Invalid pickup time format' };
-  }
-
-  const { hours, minutes } = getISTDateParts(d);
-  const minutesSinceMidnight = hours * 60 + minutes;
-
-  // 8:00 AM (480) to 5:00 PM (1020), inclusive
-  if (minutesSinceMidnight < 480 || minutesSinceMidnight > 1020) {
+  const res = validatePickupTimeCanonical(exactPickupTime);
+  if (!res.valid || !res.canonical) {
     return {
       valid: false,
-      error: `Requested pickup time (${format12HourTime(hours, minutes)}) must fall between 8:00 AM and 5:00 PM IST.`,
-      minutesSinceMidnight,
-      pickupDate: d,
-      istTimeFormatted: format12HourTime(hours, minutes),
+      error: res.error || 'Invalid pickup time format',
+      minutesSinceMidnight: res.totalMinutes,
+      istTimeFormatted: res.displayTime,
     };
   }
 
+  const pickupDate = exactPickupTime instanceof Date
+    ? exactPickupTime
+    : canonicalTimeToISTDate(res.canonical);
+
   return {
     valid: true,
-    minutesSinceMidnight,
-    pickupDate: d,
-    istTimeFormatted: format12HourTime(hours, minutes),
+    canonical: res.canonical,
+    minutesSinceMidnight: res.totalMinutes,
+    pickupDate,
+    istTimeFormatted: res.displayTime,
   };
 }
 
@@ -227,34 +213,24 @@ export function getEffectiveCanteenStatus(
  * Maps an arbitrary pickup time into its continuous 15-minute preparation batch
  * e.g. 11:07 AM -> 11:00:00 to 11:15:00 (Label: 11:00 AM–11:15 AM)
  */
-export function getBatchWindow(pickupDate: Date): {
+export function getBatchWindow(pickupDate: Date | string): {
   startTime: string;
   endTime: string;
   displayLabel: string;
   batchDate: string;
 } {
-  const pad = (n: number) => n.toString().padStart(2, '0');
-  
-  // Extract authoritative IST representation
-  const { hours, minutes, dateStr } = getISTDateParts(pickupDate);
-  
-  let batchStartMin = Math.floor(minutes / 15) * 15;
-  let batchEndMin = batchStartMin === 45 ? 0 : batchStartMin + 15;
-  let batchEndHour = batchStartMin === 45 ? hours + 1 : hours;
-  let effectiveHours = hours;
+  const batch = calculate15MinBatch(pickupDate);
+  const dateObj = typeof pickupDate === 'string'
+    ? (pickupDate.includes('T') ? new Date(pickupDate) : canonicalTimeToISTDate(pickupDate))
+    : pickupDate;
+  const batchDate = getISTTodayString(dateObj);
 
-  if (hours === 17 && minutes === 0) {
-    effectiveHours = 16;
-    batchStartMin = 45;
-    batchEndMin = 0;
-    batchEndHour = 17;
-  }
-
-  const startTime = `${pad(effectiveHours)}:${pad(batchStartMin)}:00`;
-  const endTime = `${pad(batchEndHour)}:${pad(batchEndMin)}:00`;
-  const displayLabel = `${format12HourTime(effectiveHours, batchStartMin)}–${format12HourTime(batchEndHour, batchEndMin)}`;
-
-  return { startTime, endTime, displayLabel, batchDate: dateStr };
+  return {
+    startTime: batch.startTime,
+    endTime: batch.endTime,
+    displayLabel: batch.displayLabel,
+    batchDate,
+  };
 }
 
 export interface CreateOrderInput {
@@ -265,7 +241,7 @@ export interface CreateOrderInput {
     quantity: number;
     customizations?: string[];
   }>;
-  exactPickupTime: string; // ISO string e.g. 2026-10-08T11:07:00.000Z
+  exactPickupTime: string; // Canonical 'HH:mm' e.g. "13:00" or ISO string
   idempotencyKey: string;
   simulatedNow?: Date;
 }
@@ -286,16 +262,15 @@ export async function createOrder(input: CreateOrderInput) {
     return { order: existingOrder, alreadyCreated: true };
   }
 
-  const pickupDate = new Date(exactPickupTime);
-  if (isNaN(pickupDate.getTime())) {
-    throw new Error('Invalid requested pickup time');
-  }
-
-  // 1. Validate pickup time against official hours (8:00 AM to 5:00 PM IST)
-  const timeValidation = validatePickupTime(pickupDate);
-  if (!timeValidation.valid) {
+  // 1. Authoritative canonical validation of requested pickup time
+  const timeValidation = validatePickupTimeCanonical(exactPickupTime);
+  if (!timeValidation.valid || !timeValidation.canonical) {
     throw new Error(timeValidation.error || 'Requested pickup time must be within canteen operating hours (8:00 AM to 5:00 PM)');
   }
+
+  // Exact local IST timestamp
+  const todayIST = getISTTodayString(simulatedNow || new Date());
+  const pickupDate = canonicalTimeToISTDate(timeValidation.canonical, todayIST);
 
   // 2. Validate Canteen & Operating Hours
   const canteen = await db.query.canteens.findFirst({
@@ -576,7 +551,13 @@ export async function sellerRejectOrder(orderId: string, sellerUserId: string, r
 /**
  * Seller suggests another pickup time
  */
-export async function sellerSuggestTime(orderId: string, sellerUserId: string, suggestedTime: Date, note?: string, sellerCanteenId?: string) {
+export async function sellerSuggestTime(
+  orderId: string,
+  sellerUserId: string,
+  suggestedTime: Date | string,
+  note?: string,
+  sellerCanteenId?: string
+) {
   const order = await db.query.orders.findFirst({
     where: eq(orders.id, orderId)
   });
@@ -586,14 +567,21 @@ export async function sellerSuggestTime(orderId: string, sellerUserId: string, s
     throw new Error('Forbidden: Cannot suggest time for another canteen');
   }
 
-  const validation = validatePickupTime(suggestedTime);
-  if (!validation.valid) {
+  // Only allow time suggestions on pending order requests
+  if (order.status !== 'REQUESTED') {
+    throw new Error(`Cannot suggest a new time for order in "${order.status}" status.`);
+  }
+
+  const validation = validatePickupTimeCanonical(suggestedTime);
+  if (!validation.valid || !validation.canonical) {
     throw new Error(validation.error || 'Suggested pickup time must be within canteen operating hours (8:00 AM to 5:00 PM)');
   }
 
+  const suggestedDate = canonicalTimeToISTDate(validation.canonical);
+
   const [updated] = await db.update(orders)
     .set({
-      sellerSuggestedTime: suggestedTime,
+      sellerSuggestedTime: suggestedDate,
       timeNegotiationStatus: 'SUGGESTED_BY_SELLER',
       rejectionNote: note || null,
       updatedAt: new Date(),
@@ -601,15 +589,28 @@ export async function sellerSuggestTime(orderId: string, sellerUserId: string, s
     .where(eq(orders.id, orderId))
     .returning();
 
+  // Audit history log
+  await db.insert(orderStatusHistory).values({
+    orderId,
+    toStatus: order.status,
+    changedByUserId: sellerUserId,
+    actorRole: 'SELLER',
+    reason: `Seller suggested alternative pickup time: ${validation.displayTime}${note ? ` (${note})` : ''}`,
+  }).catch(() => {});
+
   await db.insert(notifications).values({
     userId: order.customerId,
     orderId,
     title: 'New Time Suggested',
-    message: `Seller suggested a new pickup time: ${format12HourIST(suggestedTime)}. Please review.`,
+    message: `Seller suggested an alternative pickup time: ${validation.displayTime}. Please review and accept.`,
     type: 'TIME_CHANGED',
   });
 
-  return updated;
+  return {
+    ...updated,
+    canonicalSuggestedTime: validation.canonical,
+    displaySuggestedTime: validation.displayTime,
+  };
 }
 
 /**
@@ -669,6 +670,14 @@ export async function customerRespondTimeSuggestion(orderId: string, customerId:
         paymentExpiresAt: new Date(Date.now() + 15 * 60 * 1000),
         updatedAt: new Date(),
       }).where(eq(orders.id, orderId));
+
+      await tx.insert(orderStatusHistory).values({
+        orderId,
+        toStatus: 'ACCEPTED',
+        changedByUserId: customerId,
+        actorRole: 'CUSTOMER',
+        reason: `Customer accepted seller suggested pickup time (${displayLabel})`,
+      }).catch(() => {});
     });
 
     return { success: true, accepted: true };
@@ -684,6 +693,14 @@ export async function customerRespondTimeSuggestion(orderId: string, customerId:
         cancelledAt: new Date(),
         updatedAt: new Date(),
       }).where(eq(orders.id, orderId));
+
+      await tx.insert(orderStatusHistory).values({
+        orderId,
+        toStatus: 'CANCELLED',
+        changedByUserId: customerId,
+        actorRole: 'CUSTOMER',
+        reason: 'Customer declined seller suggested pickup time',
+      }).catch(() => {});
     });
 
     return { success: true, accepted: false };

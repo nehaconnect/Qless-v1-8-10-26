@@ -29,6 +29,11 @@ import {
   Layers,
   Check
 } from 'lucide-react';
+import {
+  validatePickupTimeCanonical,
+  calculate15MinBatch,
+  formatPickupTimeDisplay,
+} from '@/lib/pickup-time';
 
 interface MenuItem {
   id: string;
@@ -201,35 +206,19 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
 
   // Update calculated 15-minute batch preview in 12-hour format & validate 8:00 AM to 5:00 PM IST
   useEffect(() => {
-    if (!selectedTimeStr || !selectedTimeStr.includes(':')) {
-      setTimeValidationError('Please select a valid time.');
-      return;
-    }
-    const [hStr, mStr] = selectedTimeStr.split(':');
-    const h = parseInt(hStr, 10);
-    const m = parseInt(mStr, 10);
-    const minutesSinceMidnight = h * 60 + m;
-
-    // Operating hours: 8:00 AM (480) to 5:00 PM (1020)
-    if (minutesSinceMidnight < 480 || minutesSinceMidnight > 1020) {
-      setTimeValidationError(`Pickup time must be between 8:00 AM and 5:00 PM. (${format12Hour(h, m)} is outside operating hours)`);
+    const val = validatePickupTimeCanonical(selectedTimeStr);
+    if (!val.valid) {
+      setTimeValidationError(val.error || 'Please select a valid time between 8:00 AM and 5:00 PM.');
     } else {
       setTimeValidationError(null);
     }
 
-    let batchStartMin = Math.floor(m / 15) * 15;
-    let batchEndMin = batchStartMin === 45 ? 0 : batchStartMin + 15;
-    let batchEndHour = batchStartMin === 45 ? h + 1 : h;
-    let effectiveHour = h;
-
-    if (h === 17 && m === 0) {
-      effectiveHour = 16;
-      batchStartMin = 45;
-      batchEndHour = 17;
-      batchEndMin = 0;
+    try {
+      const batch = calculate15MinBatch(selectedTimeStr);
+      setCalculatedBatch(batch.displayLabel);
+    } catch {
+      setCalculatedBatch('--:--');
     }
-
-    setCalculatedBatch(`${format12Hour(effectiveHour, batchStartMin)}–${format12Hour(batchEndHour, batchEndMin)}`);
   }, [selectedTimeStr]);
 
   // Cart operations
@@ -272,16 +261,13 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
     setIsSubmittingOrder(true);
 
     try {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const exactPickupISO = `${todayStr}T${selectedTimeStr}:00.000Z`;
-
       const payload = {
         canteenId: selectedCanteenId || undefined,
         items: cart.map(ci => ({
           menuItemId: ci.item.id,
           quantity: ci.quantity,
         })),
-        exactPickupTime: exactPickupISO,
+        exactPickupTime: selectedTimeStr,
         idempotencyKey: `ord_${Date.now()}_${Math.random().toString(36).substring(7)}`,
       };
 
@@ -407,19 +393,8 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
   const activeOrders = ordersList.filter(o => !['COLLECTED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(o.status));
   const previousOrders = ordersList.filter(o => ['COLLECTED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(o.status));
 
-  const format12TimeIST = (isoString?: string | null) => {
-    if (!isoString) return '--:--';
-    try {
-      const d = new Date(isoString);
-      return d.toLocaleTimeString('en-US', {
-        timeZone: 'Asia/Kolkata',
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true,
-      });
-    } catch {
-      return '--:--';
-    }
+  const format12TimeIST = (val?: string | Date | null) => {
+    return formatPickupTimeDisplay(val);
   };
 
   const currentCanteenName = canteensList.find(c => c.id === selectedCanteenId)?.name || 'IP Canteen';
