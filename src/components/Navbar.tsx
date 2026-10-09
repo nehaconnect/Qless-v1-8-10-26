@@ -14,7 +14,9 @@ import {
   CheckCircle2,
   Clock,
   Wifi,
-  WifiOff
+  WifiOff,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 import { authClient } from '@/lib/auth/auth-client';
 
@@ -26,7 +28,9 @@ interface NavbarProps {
     role: 'CUSTOMER' | 'SELLER' | 'ADMIN';
     effectiveRole: 'CUSTOMER' | 'SELLER' | 'ADMIN';
   } | null;
-  onLogout: () => void;
+  onLogout: () => Promise<void> | void;
+  isLoggingOut?: boolean;
+  logoutError?: string | null;
   onSwitchViewAs?: (role: 'CUSTOMER' | 'SELLER' | 'ADMIN') => void;
   canteenStatus?: 'OPEN' | 'TOO_BUSY' | 'CLOSED';
   isLive?: boolean;
@@ -35,6 +39,8 @@ interface NavbarProps {
 export const Navbar: React.FC<NavbarProps> = ({
   user,
   onLogout,
+  isLoggingOut = false,
+  logoutError = null,
   onSwitchViewAs,
   canteenStatus = 'OPEN',
   isLive = true,
@@ -87,6 +93,21 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <nav className="sticky top-0 z-40 bg-surface/95 backdrop-blur-md border-b border-slate-200 shadow-sm">
+      {/* Admin View-As active support banner */}
+      {user?.role === 'ADMIN' && user.effectiveRole !== 'ADMIN' && onSwitchViewAs && (
+        <div className="bg-amber-400 text-slate-900 px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm border-b border-amber-500">
+          <div className="flex items-center gap-2">
+            <Eye className="w-3.5 h-3.5" />
+            <span>Support View Mode: Viewing as <strong>{user.effectiveRole}</strong> (Session is Admin)</span>
+          </div>
+          <button
+            onClick={() => onSwitchViewAs('ADMIN')}
+            className="px-2.5 py-0.5 bg-slate-900 text-white rounded font-bold hover:bg-slate-800 transition text-[11px]"
+          >
+            Exit View-As (Back to Admin)
+          </button>
+        </div>
+      )}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           {/* Brand Logo */}
@@ -243,16 +264,50 @@ export const Navbar: React.FC<NavbarProps> = ({
                         </div>
                       </div>
                     </div>
+
+                    {/* Admin Exit View-As Option */}
+                    {user.role === 'ADMIN' && user.effectiveRole !== 'ADMIN' && onSwitchViewAs && (
+                      <button
+                        onClick={() => {
+                          setShowProfileMenu(false);
+                          onSwitchViewAs('ADMIN');
+                        }}
+                        className="w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-bold text-deep-blue bg-blue-50 hover:bg-blue-100 rounded-xl transition mt-2 min-h-[40px]"
+                      >
+                        <Eye className="w-4 h-4" />
+                        <span>Exit View-As (Back to Admin)</span>
+                      </button>
+                    )}
+
+                    {/* Sign Out Button */}
                     <button
-                      onClick={() => {
+                      id="navbar-sign-out-btn"
+                      disabled={isLoggingOut}
+                      onClick={async () => {
                         setShowProfileMenu(false);
-                        onLogout();
+                        await onLogout();
                       }}
-                      className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-bold text-danger hover:bg-rose-50 rounded-xl transition mt-2 min-h-[44px]"
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-bold text-danger hover:bg-rose-50 disabled:opacity-50 disabled:cursor-not-allowed rounded-xl transition mt-2 min-h-[44px]"
                     >
-                      <LogOut className="w-4 h-4" />
-                      <span>Sign Out</span>
+                      {isLoggingOut ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>Signing Out...</span>
+                        </>
+                      ) : (
+                        <>
+                          <LogOut className="w-4 h-4" />
+                          <span>Sign Out</span>
+                        </>
+                      )}
                     </button>
+
+                    {logoutError && (
+                      <div className="mt-2 p-2 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-center gap-1.5 font-medium">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span>{logoutError}</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
