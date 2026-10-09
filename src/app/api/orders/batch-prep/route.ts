@@ -4,7 +4,7 @@ import { sellerStartPreparingBatch, sellerMarkBatchReady } from '@/lib/services/
 
 export async function POST(req: NextRequest) {
   try {
-    const authUser = await requireSeller();
+    const authUser = await requireSeller(req.headers);
     const body = await req.json();
     const { batchId, action = 'START' } = body;
 

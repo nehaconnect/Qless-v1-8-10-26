@@ -23,7 +23,11 @@ export async function POST(
       signature,
     });
 
-    return NextResponse.json({ success: true, order: updated });
+    return NextResponse.json({
+      success: true,
+      order: updated,
+      pickupCode: updated.plaintextPickupCode,
+    });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 400 });
   }

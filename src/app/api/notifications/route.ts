@@ -5,7 +5,7 @@ import { requireAuth } from '@/lib/auth/server';
 
 export async function GET(req: NextRequest) {
   try {
-    const authUser = await requireAuth();
+    const authUser = await requireAuth(req.headers);
 
     const userNotifs = await db.select().from(notifications)
       .where(eq(notifications.userId, authUser.id))
@@ -16,13 +16,13 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ notifications: userNotifs, unreadCount });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 400 });
+    return NextResponse.json({ error: err.message }, { status: 401 });
   }
 }
 
 export async function PATCH(req: NextRequest) {
   try {
-    const authUser = await requireAuth();
+    const authUser = await requireAuth(req.headers);
     const body = await req.json();
     const { notificationId, markAllRead } = body;
 

@@ -43,7 +43,7 @@ export async function GET(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const user = await requireSeller();
+    const user = await requireSeller(req.headers);
     const body = await req.json();
     const { batchId, newCapacity } = body;
 
