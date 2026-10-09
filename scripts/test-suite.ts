@@ -1,6 +1,14 @@
 import { db, user, canteens, pickupBatches, menuItems, orders, pickupCodes } from '../src/lib/db';
 import { eq, and, sql } from 'drizzle-orm';
-import { createOrder, sellerAcceptOrder, confirmOrderPayment, sellerStartPreparingBatch, sellerMarkOrderReady, sellerVerifyPickup, getBatchWindow } from '../src/lib/services/order-service';
+import {
+  createOrder,
+  sellerAcceptOrder,
+  confirmOrderPayment,
+  sellerStartPreparingBatch,
+  sellerMarkOrderReady,
+  sellerVerifyPickup,
+  getBatchWindow
+} from '../src/lib/services/order-service';
 import crypto from 'crypto';
 import * as dotenv from 'dotenv';
 
@@ -34,16 +42,19 @@ async function runTestSuite() {
   const batch11_18 = getBatchWindow(date11_18);
   assert(batch11_18.startTime === '11:15:00' && batch11_18.endTime === '11:30:00', 'Arbitrary pickup time 11:18 AM maps to 11:15-11:30 batch');
 
-  // Fetch canteen & sample customer
+  // Fetch canteen & sample customer & seller
   const canteen = await db.query.canteens.findFirst({ where: eq(canteens.name, 'IP Canteen') });
   const customer = await db.query.user.findFirst({ where: eq(user.username, 'ctr/siya_sen') });
   const seller = await db.query.user.findFirst({ where: eq(user.username, 'slr/soman_singh') });
-  const dosa = await db.query.menuItems.findFirst({ where: eq(menuItems.name, 'Masala Dosa') });
-  const chai = await db.query.menuItems.findFirst({ where: eq(menuItems.name, 'Special Masala Chai') });
+  const poha = await db.query.menuItems.findFirst({ where: and(eq(menuItems.canteenId, canteen!.id), eq(menuItems.name, 'Poha')) });
+  const tea = await db.query.menuItems.findFirst({ where: and(eq(menuItems.canteenId, canteen!.id), eq(menuItems.name, 'Tea')) });
 
-  if (!canteen || !customer || !seller || !dosa || !chai) {
-    throw new Error('Seed data required for testing not found');
+  if (!canteen || !customer || !seller || !poha || !tea) {
+    throw new Error('Seed data required for testing (IP Canteen, customer, seller, Poha, Tea) not found');
   }
+
+  const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const simulatedOperatingNow = new Date(`${todayStr}T11:00:00+05:30`);
 
   // 2. Server-side price calculation test (Never trust client price)
   console.log('\n--- Test 2: Server-Side Price Authority ---');
@@ -51,22 +62,32 @@ async function runTestSuite() {
     customerId: customer.id,
     canteenId: canteen.id,
     items: [
-      { menuItemId: dosa.id, quantity: 2 }, // 60 * 2 = 120
-      { menuItemId: chai.id, quantity: 1 }  // 15 * 1 = 15
+      { menuItemId: poha.id, quantity: 2 }, // 40 * 2 = 80
+      { menuItemId: tea.id, quantity: 1 }   // 10 * 1 = 10
     ],
-    exactPickupTime: '2026-10-08T11:07:00.000Z',
+    exactPickupTime: `${todayStr}T11:07:00+05:30`,
+    simulatedNow: simulatedOperatingNow,
     idempotencyKey: `test_price_${Date.now()}`,
   });
 
-  const expectedTotal = (parseFloat(dosa.price) * 2 + parseFloat(chai.price) * 1).toFixed(2);
+  const expectedTotal = (parseFloat(poha.price!) * 2 + parseFloat(tea.price!) * 1).toFixed(2);
   assert(fakePriceOrder.order.totalAmount === expectedTotal, `Total amount calculated strictly server-side (₹${expectedTotal})`);
 
-  // 3. Pickup code zero plaintext verification
+  // 3. Pickup code zero plaintext verification (generated after seller accept & customer payment)
   console.log('\n--- Test 3: Pickup Code Zero Plaintext & Hash Verification ---');
   const orderId = fakePriceOrder.order.id;
+  await sellerAcceptOrder(orderId, seller.id);
+  const paidPriceOrder = await confirmOrderPayment({
+    orderId,
+    customerId: customer.id,
+    providerPaymentId: `pay_test_${Date.now()}`,
+    providerOrderId: `ord_test_${Date.now()}`,
+  });
+
   const storedCodeRecord = await db.query.pickupCodes.findFirst({ where: eq(pickupCodes.orderId, orderId) });
   assert(Boolean(storedCodeRecord?.codeHash), 'Pickup code hash is stored in database');
   assert(!('code' in (storedCodeRecord || {})), 'Plaintext pickup code is NEVER stored in database table');
+  assert(Boolean(storedCodeRecord?.encryptedCode), 'Encrypted ciphertext stored with AES-256-GCM');
 
   // 4. Rate-limited pickup code brute-force protection
   console.log('\n--- Test 4: Rate-Limited Pickup Code Protection ---');
@@ -82,10 +103,8 @@ async function runTestSuite() {
 
   // 5. Concurrency & Batch Capacity Reservation Test
   console.log('\n--- Test 5: Concurrency & Capacity Enforcement ---');
-  // Configure test batch with strictly 1 available slot remaining
   const testStartTime = '11:15:00';
   const testEndTime = '11:30:00';
-  const todayStr = new Date().toISOString().split('T')[0];
 
   let existingBatch = await db.query.pickupBatches.findFirst({
     where: and(
@@ -124,16 +143,18 @@ async function runTestSuite() {
   const orderPromise1 = createOrder({
     customerId: customer.id,
     canteenId: canteen.id,
-    items: [{ menuItemId: chai.id, quantity: 1 }],
+    items: [{ menuItemId: tea.id, quantity: 1 }],
     exactPickupTime: pickupTimeISO,
+    simulatedNow: simulatedOperatingNow,
     idempotencyKey: `concurrent_1_${Date.now()}`,
   });
 
   const orderPromise2 = createOrder({
     customerId: customer.id,
     canteenId: canteen.id,
-    items: [{ menuItemId: chai.id, quantity: 1 }],
+    items: [{ menuItemId: tea.id, quantity: 1 }],
     exactPickupTime: pickupTimeISO,
+    simulatedNow: simulatedOperatingNow,
     idempotencyKey: `concurrent_2_${Date.now()}`,
   });
 
@@ -151,12 +172,12 @@ async function runTestSuite() {
   const flowOrderRes = await createOrder({
     customerId: customer.id,
     canteenId: canteen.id,
-    items: [{ menuItemId: dosa.id, quantity: 1 }],
+    items: [{ menuItemId: poha.id, quantity: 1 }],
     exactPickupTime: `${todayStr}T12:15:00+05:30`,
+    simulatedNow: simulatedOperatingNow,
     idempotencyKey: `flow_${Date.now()}`,
   });
   const flowOrder = flowOrderRes.order;
-  const flowCode = flowOrderRes.plaintextPickupCode;
   assert(flowOrder.status === 'REQUESTED', 'Step 1: Order created with status REQUESTED');
 
   const acceptedOrder = await sellerAcceptOrder(flowOrder.id, seller.id);
@@ -168,7 +189,9 @@ async function runTestSuite() {
     providerPaymentId: `pay_rzp_test_${Date.now()}`,
     providerOrderId: `ord_rzp_test_${Date.now()}`,
   });
+  const flowCode = paidOrder.plaintextPickupCode;
   assert(paidOrder.status === 'CONFIRMED' && paidOrder.paymentStatus === 'PAID', 'Step 3: Payment verified and confirmed (CONFIRMED, PAID)');
+  assert(Boolean(flowCode), 'Step 3b: Plaintext pickup code generated and returned upon payment');
 
   await sellerStartPreparingBatch(flowOrder.batchId, seller.id);
   const prepOrder = await db.query.orders.findFirst({ where: eq(orders.id, flowOrder.id) });

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, orders, orderItems, orderStatusHistory, pickupBatches, user } from '@/lib/db';
+import { db, orders, orderItems, orderStatusHistory, pickupBatches, user, pickupCodes } from '@/lib/db';
 import { eq, and, asc } from 'drizzle-orm';
 import { requireAuth } from '@/lib/auth/server';
 import {
@@ -8,6 +8,7 @@ import {
   sellerSuggestTime,
   customerRespondTimeSuggestion,
   sellerMarkOrderReady,
+  decryptPickupCode,
 } from '@/lib/services/order-service';
 
 export async function GET(
@@ -41,6 +42,22 @@ export async function GET(
     const batch = await db.query.pickupBatches.findFirst({ where: eq(pickupBatches.id, order.batchId) });
     const customer = await db.query.user.findFirst({ where: eq(user.id, order.customerId) });
 
+    const pcRecord = await db.query.pickupCodes.findFirst({ where: eq(pickupCodes.orderId, orderId) });
+    let visiblePickupCode: string | null = null;
+    if (
+      pcRecord &&
+      order.paymentStatus === 'PAID' &&
+      !['REQUESTED', 'REJECTED', 'CANCELLED', 'EXPIRED'].includes(order.status)
+    ) {
+      const isOwnerCustomer = authUser.role === 'CUSTOMER' && order.customerId === authUser.id;
+      const isOwnerSeller =
+        (authUser.role === 'SELLER' || authUser.effectiveRole === 'SELLER') &&
+        order.canteenId === authUser.canteenId;
+      if (isOwnerCustomer || isOwnerSeller) {
+        visiblePickupCode = decryptPickupCode(pcRecord.encryptedCode);
+      }
+    }
+
     return NextResponse.json({
       order: {
         ...order,
@@ -49,6 +66,8 @@ export async function GET(
         batch,
         customerName: customer?.name || 'Customer',
         customerPhone: customer?.phoneNumber || '',
+        pickupCode: visiblePickupCode,
+        isPickupVerified: pcRecord?.isVerified ?? false,
       }
     });
   } catch (err: any) {

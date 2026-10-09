@@ -13,6 +13,8 @@ export default function Home() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [viewAsRole, setViewAsRole] = useState<'CUSTOMER' | 'SELLER' | 'ADMIN' | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
 
   // Live canteen status
   const [canteenStatus, setCanteenStatus] = useState<'OPEN' | 'TOO_BUSY' | 'CLOSED'>('OPEN');
@@ -74,12 +76,79 @@ export default function Home() {
   }, []);
 
   const handleLogout = async () => {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+    setLogoutError(null);
+
     try {
-      await authClient.signOut();
-    } catch {}
-    setCurrentUser(null);
-    setViewAsRole(null);
-    window.location.reload();
+      let serverLoggedOut = false;
+      let lastErrorMessage = '';
+
+      // 1. Better Auth client signOut method
+      try {
+        const res = await authClient.signOut();
+        if (!res?.error) {
+          serverLoggedOut = true;
+        } else {
+          lastErrorMessage = res.error.message || '';
+        }
+      } catch (clientErr: any) {
+        lastErrorMessage = clientErr?.message || '';
+      }
+
+      // 2. Direct server logout endpoint to ensure DB session table record deletion and cookie clearing
+      try {
+        const directRes = await fetch('/api/auth/logout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+        });
+        if (directRes.ok) {
+          serverLoggedOut = true;
+        } else {
+          const directData = await directRes.json().catch(() => ({}));
+          lastErrorMessage = directData.error || lastErrorMessage || 'Sign-out operation failed on server';
+        }
+      } catch (fetchErr: any) {
+        lastErrorMessage = fetchErr?.message || lastErrorMessage;
+      }
+
+      if (!serverLoggedOut) {
+        throw new Error(lastErrorMessage || 'Sign out failed. Please try again.');
+      }
+
+      // 3. Clear all client-accessible session cookies explicitly (safety for both HTTP and HTTPS)
+      const expiredCookies = [
+        'better-auth.session_token',
+        '__Secure-better-auth.session_token',
+        'better-auth.session_data',
+        '__Secure-better-auth.session_data',
+        'better-auth.dont_remember',
+        '__Secure-better-auth.dont_remember',
+        'better-auth.account_data',
+        '__Secure-better-auth.account_data',
+      ];
+      for (const cookieName of expiredCookies) {
+        document.cookie = `${cookieName}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; SameSite=Lax`;
+        document.cookie = `${cookieName}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=0; Secure; SameSite=Lax`;
+      }
+
+      // 4. Invalidate client state immediately
+      setCurrentUser(null);
+      setViewAsRole(null);
+      setLogoutError(null);
+
+      // Verify session is strictly gone
+      const verifySession = await authClient.getSession().catch(() => null);
+      if (verifySession?.data?.user) {
+        throw new Error('Authenticated session still active. Please try again.');
+      }
+    } catch (err: any) {
+      console.error('Logout failed:', err);
+      setLogoutError(err?.message || 'Sign out failed. Please try again.');
+    } finally {
+      setIsLoggingOut(false);
+    }
   };
 
   const handleUpdateCanteenStatus = async (newStatus: 'OPEN' | 'TOO_BUSY' | 'CLOSED') => {
@@ -128,14 +197,16 @@ export default function Home() {
       <Navbar
         user={navbarUser}
         onLogout={handleLogout}
-        onSwitchViewAs={(role) => setViewAsRole(role)}
+        isLoggingOut={isLoggingOut}
+        logoutError={logoutError}
+        onSwitchViewAs={(role) => setViewAsRole(role === 'ADMIN' ? null : role)}
         canteenStatus={canteenStatus}
         isLive={isLive}
       />
 
       <main className="flex-1">
         {effectiveRole === 'CUSTOMER' && (
-          <CustomerPortal user={currentUser} canteenStatus={canteenStatus} />
+          <CustomerPortal user={currentUser} canteenStatus={canteenStatus} onLogout={handleLogout} />
         )}
         {effectiveRole === 'SELLER' && (
           <SellerPortal
@@ -146,7 +217,7 @@ export default function Home() {
           />
         )}
         {effectiveRole === 'ADMIN' && (
-          <AdminPortal onSwitchViewAs={(role) => setViewAsRole(role)} />
+          <AdminPortal onSwitchViewAs={(role) => setViewAsRole(role)} onLogout={handleLogout} />
         )}
       </main>
 

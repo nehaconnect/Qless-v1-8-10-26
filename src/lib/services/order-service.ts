@@ -5,6 +5,11 @@ import crypto from 'crypto';
 // 4-character uppercase alphanumeric character set (excluding confusing characters like 0, O, 1, I)
 const PICKUP_CHARS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 
+const ENCRYPTION_KEY = crypto
+  .createHash('sha256')
+  .update(process.env.BETTER_AUTH_SECRET || 'qless-secure-production-secret-auth-key-2026')
+  .digest(); // 32-byte key
+
 export function generateSecurePickupCode(): string {
   let code = '';
   for (let i = 0; i < 4; i++) {
@@ -16,6 +21,30 @@ export function generateSecurePickupCode(): string {
 
 export function hashPickupCode(code: string, salt: string): string {
   return crypto.createHash('sha256').update(`${salt}:${code.toUpperCase()}`).digest('hex');
+}
+
+export function encryptPickupCode(code: string): string {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
+  let encrypted = cipher.update(code.toUpperCase(), 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  const tag = cipher.getAuthTag().toString('hex');
+  return `${iv.toString('hex')}:${tag}:${encrypted}`;
+}
+
+export function decryptPickupCode(encryptedStr?: string | null): string | null {
+  if (!encryptedStr || !encryptedStr.includes(':')) return null;
+  try {
+    const [ivHex, tagHex, contentHex] = encryptedStr.split(':');
+    if (!ivHex || !tagHex || !contentHex) return null;
+    const decipher = crypto.createDecipheriv('aes-256-gcm', ENCRYPTION_KEY, Buffer.from(ivHex, 'hex'));
+    decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+    let decrypted = decipher.update(contentHex, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted.toUpperCase();
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -44,9 +73,159 @@ export function getISTDateParts(d: Date): { hours: number; minutes: number; date
   return { hours, minutes, dateStr: `${year}-${month}-${day}` };
 }
 
+export function format12HourTime(hours: number, minutes: number): string {
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  const displayH = hours % 12 === 0 ? 12 : hours % 12;
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${displayH}:${pad(minutes)} ${ampm}`;
+}
+
+export function format12HourIST(d: Date | string | null | undefined): string {
+  if (!d) return '--:--';
+  const dateObj = typeof d === 'string' ? new Date(d) : d;
+  if (isNaN(dateObj.getTime())) return '--:--';
+  return dateObj.toLocaleTimeString('en-US', {
+    timeZone: 'Asia/Kolkata',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
+/**
+ * Validates whether an exact pickup time falls between 8:00 AM and 5:00 PM IST (inclusive)
+ */
+export function validatePickupTime(exactPickupTime: Date | string): {
+  valid: boolean;
+  error?: string;
+  minutesSinceMidnight?: number;
+  pickupDate?: Date;
+  istTimeFormatted?: string;
+} {
+  const d = typeof exactPickupTime === 'string' ? new Date(exactPickupTime) : exactPickupTime;
+  if (isNaN(d.getTime())) {
+    return { valid: false, error: 'Invalid pickup time format' };
+  }
+
+  const { hours, minutes } = getISTDateParts(d);
+  const minutesSinceMidnight = hours * 60 + minutes;
+
+  // 8:00 AM (480) to 5:00 PM (1020), inclusive
+  if (minutesSinceMidnight < 480 || minutesSinceMidnight > 1020) {
+    return {
+      valid: false,
+      error: `Requested pickup time (${format12HourTime(hours, minutes)}) must fall between 8:00 AM and 5:00 PM IST.`,
+      minutesSinceMidnight,
+      pickupDate: d,
+      istTimeFormatted: format12HourTime(hours, minutes),
+    };
+  }
+
+  return {
+    valid: true,
+    minutesSinceMidnight,
+    pickupDate: d,
+    istTimeFormatted: format12HourTime(hours, minutes),
+  };
+}
+
+/**
+ * Authoritative effective canteen status calculation taking into account:
+ * - Current Asia/Kolkata time
+ * - Scheduled operating hours (8:00 AM to 5:00 PM IST)
+ * - Seller's manual status & persisted manual override
+ */
+export function getEffectiveCanteenStatus(
+  canteen: {
+    operatingStatus: string;
+    manualOverrideStatus?: string | null;
+    manualOverrideDate?: string | null;
+    openingTime?: string;
+    closingTime?: string;
+    isActive?: boolean;
+  },
+  now: Date = new Date()
+): {
+  effectiveStatus: 'OPEN' | 'TOO_BUSY' | 'CLOSED';
+  isOperatingHours: boolean;
+  isManualOverride: boolean;
+  scheduledHours: string;
+  currentTimeIST: string;
+} {
+  const { hours, minutes, dateStr } = getISTDateParts(now);
+  const currentMinutes = hours * 60 + minutes;
+
+  const openMinutes = 8 * 60;   // 480 (8:00 AM)
+  const closeMinutes = 17 * 60; // 1020 (5:00 PM)
+
+  const isOperatingHours = currentMinutes >= openMinutes && currentMinutes <= closeMinutes;
+  const scheduledHours = '8:00 AM – 5:00 PM';
+  const currentTimeIST = format12HourTime(hours, minutes);
+
+  // 1. After 5:00 PM IST: Canteen MUST be closed for new orders.
+  // "At 5:00 PM, the scheduled operating period ends. The canteen must automatically stop accepting new orders."
+  // "After 5:00 PM, the canteen remains CLOSED for new orders even if the seller's previous status was OPEN."
+  // "Manual opening must not override the 5:00 PM closing boundary."
+  if (currentMinutes >= closeMinutes) {
+    return {
+      effectiveStatus: 'CLOSED',
+      isOperatingHours: false,
+      isManualOverride: false,
+      scheduledHours,
+      currentTimeIST,
+    };
+  }
+
+  const isTodayOverride = canteen.manualOverrideDate === dateStr;
+  const manualStatus = isTodayOverride ? canteen.manualOverrideStatus : null;
+
+  // 2. Before 8:00 AM IST:
+  // "Before 8:00 AM, the canteen is CLOSED unless the seller has explicitly opened it manually."
+  if (currentMinutes < openMinutes) {
+    if (manualStatus === 'OPEN') {
+      return {
+        effectiveStatus: 'OPEN',
+        isOperatingHours: false,
+        isManualOverride: true,
+        scheduledHours,
+        currentTimeIST,
+      };
+    }
+    return {
+      effectiveStatus: 'CLOSED',
+      isOperatingHours: false,
+      isManualOverride: false,
+      scheduledHours,
+      currentTimeIST,
+    };
+  }
+
+  // 3. Between 8:00 AM and 5:00 PM IST:
+  // "At 8:00 AM, the canteen automatically becomes OPEN unless the seller has explicitly selected CLOSED or TOO BUSY."
+  // "Between 8:00 AM and 5:00 PM, the canteen remains OPEN by default unless the seller manually changes its status."
+  if (manualStatus && ['OPEN', 'TOO_BUSY', 'CLOSED'].includes(manualStatus)) {
+    return {
+      effectiveStatus: manualStatus as 'OPEN' | 'TOO_BUSY' | 'CLOSED',
+      isOperatingHours: true,
+      isManualOverride: true,
+      scheduledHours,
+      currentTimeIST,
+    };
+  }
+
+  // Default between 8:00 AM and 5:00 PM is OPEN
+  return {
+    effectiveStatus: 'OPEN',
+    isOperatingHours: true,
+    isManualOverride: false,
+    scheduledHours,
+    currentTimeIST,
+  };
+}
+
 /**
  * Maps an arbitrary pickup time into its continuous 15-minute preparation batch
- * e.g. 11:07 AM -> 11:00:00 to 11:15:00
+ * e.g. 11:07 AM -> 11:00:00 to 11:15:00 (Label: 11:00 AM–11:15 AM)
  */
 export function getBatchWindow(pickupDate: Date): {
   startTime: string;
@@ -73,7 +252,7 @@ export function getBatchWindow(pickupDate: Date): {
 
   const startTime = `${pad(effectiveHours)}:${pad(batchStartMin)}:00`;
   const endTime = `${pad(batchEndHour)}:${pad(batchEndMin)}:00`;
-  const displayLabel = `${pad(effectiveHours)}:${pad(batchStartMin)}–${pad(batchEndHour)}:${pad(batchEndMin)}`;
+  const displayLabel = `${format12HourTime(effectiveHours, batchStartMin)}–${format12HourTime(batchEndHour, batchEndMin)}`;
 
   return { startTime, endTime, displayLabel, batchDate: dateStr };
 }
@@ -88,10 +267,11 @@ export interface CreateOrderInput {
   }>;
   exactPickupTime: string; // ISO string e.g. 2026-10-08T11:07:00.000Z
   idempotencyKey: string;
+  simulatedNow?: Date;
 }
 
 export async function createOrder(input: CreateOrderInput) {
-  const { customerId, canteenId, items, exactPickupTime, idempotencyKey } = input;
+  const { customerId, canteenId, items, exactPickupTime, idempotencyKey, simulatedNow } = input;
 
   if (!items || items.length === 0) {
     throw new Error('Order must contain at least one item');
@@ -100,9 +280,6 @@ export async function createOrder(input: CreateOrderInput) {
   // Check idempotency first
   const existingOrder = await db.query.orders.findFirst({
     where: eq(orders.idempotencyKey, idempotencyKey),
-    with: {
-      // If already created, return existing
-    }
   });
 
   if (existingOrder) {
@@ -114,7 +291,13 @@ export async function createOrder(input: CreateOrderInput) {
     throw new Error('Invalid requested pickup time');
   }
 
-  // 1. Validate Canteen & Operating Hours
+  // 1. Validate pickup time against official hours (8:00 AM to 5:00 PM IST)
+  const timeValidation = validatePickupTime(pickupDate);
+  if (!timeValidation.valid) {
+    throw new Error(timeValidation.error || 'Requested pickup time must be within canteen operating hours (8:00 AM to 5:00 PM)');
+  }
+
+  // 2. Validate Canteen & Operating Hours
   const canteen = await db.query.canteens.findFirst({
     where: eq(canteens.id, canteenId)
   });
@@ -123,22 +306,17 @@ export async function createOrder(input: CreateOrderInput) {
     throw new Error('Canteen is not available');
   }
 
-  if (canteen.operatingStatus === 'CLOSED') {
+  const { effectiveStatus } = getEffectiveCanteenStatus(canteen, simulatedNow || new Date());
+
+  if (effectiveStatus === 'CLOSED') {
     throw new Error('Canteen is closed. Orders are currently disabled.');
   }
 
-  if (canteen.operatingStatus === 'TOO_BUSY') {
+  if (effectiveStatus === 'TOO_BUSY') {
     throw new Error('Canteen is currently busy. New orders are temporarily unavailable.');
   }
 
-  // Check operating hours (08:00 to 17:00 IST)
-  const { hours: pickupHour, minutes: pickupMin } = getISTDateParts(pickupDate);
-  const totalMinutes = pickupHour * 60 + pickupMin;
-  if (totalMinutes < 480 || totalMinutes > 1020) {
-    throw new Error('Requested pickup time must be within canteen operating hours (08:00 to 17:00)');
-  }
-
-  // 2. Fetch Authoritative Menu Prices Server-Side
+  // 3. Fetch Authoritative Menu Prices Server-Side
   let calculatedTotal = 0;
   const verifiedItems: Array<{
     menuItemId: string;
@@ -160,6 +338,10 @@ export async function createOrder(input: CreateOrderInput) {
 
     if (!menuItem) {
       throw new Error(`Menu item not found or unavailable`);
+    }
+
+    if (menuItem.price === null || menuItem.price === undefined) {
+      throw new Error(`Item "${menuItem.name}" has no fixed price and cannot be ordered yet.`);
     }
 
     if (!menuItem.isAvailable) {
@@ -184,7 +366,7 @@ export async function createOrder(input: CreateOrderInput) {
     });
   }
 
-  // 3. Find or Create the 15-Minute Preparation Batch
+  // 4. Find or Create the 15-Minute Preparation Batch
   const { startTime, endTime, displayLabel, batchDate } = getBatchWindow(pickupDate);
 
   let [batch] = await db.select().from(pickupBatches)
@@ -207,8 +389,7 @@ export async function createOrder(input: CreateOrderInput) {
     }).returning();
   }
 
-  // 4. Atomic Transaction: Capacity Reservation + Order Creation
-  const plaintextCode = generateSecurePickupCode();
+  // 5. Atomic Transaction: Capacity Reservation + Order Creation
   const orderNumber = `QL-${Date.now().toString(36).toUpperCase()}-${crypto.randomInt(100, 999)}`;
 
   const result = await db.transaction(async (tx) => {
@@ -259,17 +440,7 @@ export async function createOrder(input: CreateOrderInput) {
       reason: 'Order submitted by customer',
     });
 
-    // Hash pickup code and store hash ONLY (zero plaintext in DB)
-    const codeHash = hashPickupCode(plaintextCode, newOrder.id);
-    await tx.insert(pickupCodes).values({
-      orderId: newOrder.id,
-      codeHash,
-      isVerified: false,
-      failedAttempts: 0,
-      maxAttempts: 5,
-    });
-
-    // Notify canteen / seller
+    // Notify customer
     await tx.insert(notifications).values({
       userId: customerId,
       orderId: newOrder.id,
@@ -294,7 +465,6 @@ export async function createOrder(input: CreateOrderInput) {
 
   return {
     order: result,
-    plaintextPickupCode: plaintextCode, // Transmitted only to customer's live creation response
     alreadyCreated: false
   };
 }
@@ -416,6 +586,11 @@ export async function sellerSuggestTime(orderId: string, sellerUserId: string, s
     throw new Error('Forbidden: Cannot suggest time for another canteen');
   }
 
+  const validation = validatePickupTime(suggestedTime);
+  if (!validation.valid) {
+    throw new Error(validation.error || 'Suggested pickup time must be within canteen operating hours (8:00 AM to 5:00 PM)');
+  }
+
   const [updated] = await db.update(orders)
     .set({
       sellerSuggestedTime: suggestedTime,
@@ -430,7 +605,7 @@ export async function sellerSuggestTime(orderId: string, sellerUserId: string, s
     userId: order.customerId,
     orderId,
     title: 'New Time Suggested',
-    message: `Seller suggested a new pickup time: ${suggestedTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}. Please review.`,
+    message: `Seller suggested a new pickup time: ${format12HourIST(suggestedTime)}. Please review.`,
     type: 'TIME_CHANGED',
   });
 
@@ -517,6 +692,7 @@ export async function customerRespondTimeSuggestion(orderId: string, customerId:
 
 /**
  * Server-Side Razorpay Payment Verification & Order Confirmation
+ * Secure pickup code generation occurs ONLY AFTER payment is successfully verified.
  */
 export async function confirmOrderPayment(params: {
   orderId: string;
@@ -541,6 +717,9 @@ export async function confirmOrderPayment(params: {
   });
 
   if (!order) throw new Error('Order not found');
+  if (order.status === 'REJECTED' || order.status === 'CANCELLED') {
+    throw new Error(`Cannot pay for order in ${order.status} status.`);
+  }
 
   return await db.transaction(async (tx) => {
     // Record payment
@@ -576,6 +755,30 @@ export async function confirmOrderPayment(params: {
       reason: 'Payment verified successfully via Razorpay',
     });
 
+    // Generate secure pickup code upon verified payment
+    const plaintextCode = generateSecurePickupCode();
+    const codeHash = hashPickupCode(plaintextCode, orderId);
+    const encryptedCode = encryptPickupCode(plaintextCode);
+
+    const existingCode = await tx.query.pickupCodes.findFirst({ where: eq(pickupCodes.orderId, orderId) });
+    if (existingCode) {
+      await tx.update(pickupCodes).set({
+        codeHash,
+        encryptedCode,
+        isVerified: false,
+        failedAttempts: 0,
+      }).where(eq(pickupCodes.id, existingCode.id));
+    } else {
+      await tx.insert(pickupCodes).values({
+        orderId,
+        codeHash,
+        encryptedCode,
+        isVerified: false,
+        failedAttempts: 0,
+        maxAttempts: 5,
+      });
+    }
+
     await tx.insert(notifications).values({
       userId: customerId,
       orderId,
@@ -584,7 +787,10 @@ export async function confirmOrderPayment(params: {
       type: 'ORDER_CONFIRMED',
     });
 
-    return confirmed;
+    return {
+      ...confirmed,
+      plaintextPickupCode: plaintextCode,
+    };
   });
 }
 
@@ -684,7 +890,7 @@ export async function sellerMarkBatchReady(batchId: string, sellerUserId: string
 }
 
 /**
- * Seller marks an order or entire batch READY
+ * Seller marks an order READY
  */
 export async function sellerMarkOrderReady(orderId: string, sellerUserId: string, sellerCanteenId?: string) {
   const order = await db.query.orders.findFirst({
@@ -710,7 +916,7 @@ export async function sellerMarkOrderReady(orderId: string, sellerUserId: string
     reason: 'Food is ready for collection',
   });
 
-  await txOrDb(db).insert(notifications).values({
+  await db.insert(notifications).values({
     userId: order.customerId,
     orderId,
     title: 'Order is READY!',
@@ -719,10 +925,6 @@ export async function sellerMarkOrderReady(orderId: string, sellerUserId: string
   });
 
   return ready;
-}
-
-function txOrDb(client: any) {
-  return client;
 }
 
 /**
@@ -819,6 +1021,7 @@ export async function sellerVerifyPickup(orderId: string, sellerUserId: string, 
     });
 
     await tx.insert(auditLogs).values({
+      canteenId: order.canteenId,
       actorId: sellerUserId,
       actorRole: 'SELLER',
       action: 'ORDER_COLLECTED',

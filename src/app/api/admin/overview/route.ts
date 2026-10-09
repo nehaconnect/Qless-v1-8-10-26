@@ -5,7 +5,7 @@ import { requireAdmin } from '@/lib/auth/server';
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAdmin();
+    await requireAdmin(req.headers);
 
     const todayStr = new Date().toISOString().split('T')[0];
 
@@ -74,6 +74,8 @@ export async function GET(req: NextRequest) {
       activeBatches,
     });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 400 });
+    const isAuth = err.message?.includes('UNAUTHORIZED') || err.message?.includes('Sign in');
+    const isForbidden = err.message?.includes('FORBIDDEN');
+    return NextResponse.json({ error: err.message }, { status: isAuth ? 401 : isForbidden ? 403 : 400 });
   }
 }

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, orders, orderItems, pickupBatches, canteens, user } from '@/lib/db';
+import { db, orders, orderItems, pickupBatches, canteens, user, pickupCodes } from '@/lib/db';
 import { eq, desc, and, inArray } from 'drizzle-orm';
 import { requireAuth } from '@/lib/auth/server';
-import { createOrder } from '@/lib/services/order-service';
+import { createOrder, decryptPickupCode, format12HourIST } from '@/lib/services/order-service';
 
 export async function GET(req: NextRequest) {
   try {
@@ -44,19 +44,23 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ orders: [] });
     }
 
-    // Attach order items, customer name, and batch info via bulk inArray queries (prevents N+1 pool exhaustion)
+    // Attach order items, customer name, batch info, and authorized pickup codes
     const orderIds = orderList.map((o) => o.id);
     const batchIds = [...new Set(orderList.map((o) => o.batchId).filter(Boolean))] as string[];
     const customerIds = [...new Set(orderList.map((o) => o.customerId).filter(Boolean))] as string[];
 
-    const [allItems, allBatches, allCustomers] = await Promise.all([
+    const [allItems, allBatches, allCustomers, allCodes] = await Promise.all([
       db.select().from(orderItems).where(inArray(orderItems.orderId, orderIds)),
       batchIds.length > 0
         ? db.select().from(pickupBatches).where(inArray(pickupBatches.id, batchIds))
         : Promise.resolve([]),
       customerIds.length > 0
-        ? db.select({ id: user.id, name: user.name, phoneNumber: user.phoneNumber }).from(user).where(inArray(user.id, customerIds))
+        ? db
+            .select({ id: user.id, name: user.name, phoneNumber: user.phoneNumber })
+            .from(user)
+            .where(inArray(user.id, customerIds))
         : Promise.resolve([]),
+      db.select().from(pickupCodes).where(inArray(pickupCodes.orderId, orderIds)),
     ]);
 
     const itemsByOrder = new Map<string, any[]>();
@@ -76,13 +80,40 @@ export async function GET(req: NextRequest) {
       customerById.set(c.id, c);
     }
 
-    const enrichedOrders = orderList.map((ord) => ({
-      ...ord,
-      items: itemsByOrder.get(ord.id) || [],
-      batch: batchById.get(ord.batchId) || null,
-      customerName: customerById.get(ord.customerId)?.name || 'Customer',
-      customerPhone: customerById.get(ord.customerId)?.phoneNumber || '',
-    }));
+    const codeByOrder = new Map<string, any>();
+    for (const pc of allCodes) {
+      codeByOrder.set(pc.orderId, pc);
+    }
+
+    const enrichedOrders = orderList.map((ord) => {
+      const pcRecord = codeByOrder.get(ord.id);
+      let visiblePickupCode: string | null = null;
+
+      // Disclose pickup code ONLY for paid & confirmed orders to authorized customer or seller
+      if (
+        pcRecord &&
+        ord.paymentStatus === 'PAID' &&
+        !['REQUESTED', 'REJECTED', 'CANCELLED', 'EXPIRED'].includes(ord.status)
+      ) {
+        const isOwnerCustomer = authUser.role === 'CUSTOMER' && ord.customerId === authUser.id;
+        const isOwnerSeller =
+          (authUser.role === 'SELLER' || authUser.effectiveRole === 'SELLER') &&
+          ord.canteenId === authUser.canteenId;
+        if (isOwnerCustomer || isOwnerSeller) {
+          visiblePickupCode = decryptPickupCode(pcRecord.encryptedCode);
+        }
+      }
+
+      return {
+        ...ord,
+        items: itemsByOrder.get(ord.id) || [],
+        batch: batchById.get(ord.batchId) || null,
+        customerName: customerById.get(ord.customerId)?.name || 'Customer',
+        customerPhone: customerById.get(ord.customerId)?.phoneNumber || '',
+        pickupCode: visiblePickupCode,
+        isPickupVerified: pcRecord?.isVerified ?? false,
+      };
+    });
 
     return NextResponse.json({ orders: enrichedOrders });
   } catch (err: any) {
@@ -99,7 +130,7 @@ export async function POST(req: NextRequest) {
     let targetCanteenId = canteenId;
     if (!targetCanteenId) {
       const defaultCanteen = await db.query.canteens.findFirst({
-        where: eq(canteens.name, 'IP Canteen')
+        where: eq(canteens.name, 'IP Canteen'),
       });
       targetCanteenId = defaultCanteen?.id;
     }
@@ -121,7 +152,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       order: result.order,
-      pickupCode: result.plaintextPickupCode, // Returned only during creation to customer
       alreadyCreated: result.alreadyCreated,
     });
   } catch (err: any) {

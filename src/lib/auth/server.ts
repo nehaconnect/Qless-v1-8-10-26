@@ -1,6 +1,6 @@
 import { auth } from "./auth";
 import { headers } from "next/headers";
-import { db, sellerProfiles, customerProfiles } from "@/lib/db";
+import { db, user, sellerProfiles, customerProfiles } from "@/lib/db";
 import { eq } from "drizzle-orm";
 
 export interface AuthenticatedUser {
@@ -16,10 +16,21 @@ export interface AuthenticatedUser {
   sellerApprovalStatus?: string;
 }
 
-export async function getSessionUser(): Promise<AuthenticatedUser | null> {
+export async function getSessionUser(customHeaders?: Headers): Promise<AuthenticatedUser | null> {
   try {
+    let headerList: Headers;
+    if (customHeaders) {
+      headerList = customHeaders;
+    } else {
+      try {
+        headerList = await headers();
+      } catch {
+        return null;
+      }
+    }
+
     const session = await auth.api.getSession({
-      headers: await headers()
+      headers: headerList
     });
 
     if (!session || !session.user) {
@@ -27,6 +38,15 @@ export async function getSessionUser(): Promise<AuthenticatedUser | null> {
     }
 
     const u = session.user as any;
+
+    // Reject inactive or deleted accounts
+    const userInDb = await db.query.user.findFirst({
+      where: eq(user.id, u.id),
+    });
+    if (!userInDb || !userInDb.isActive) {
+      return null;
+    }
+
     let canteenId: string | undefined;
     let collegeId: string | undefined;
     let sellerApprovalStatus: string | undefined;
@@ -46,7 +66,6 @@ export async function getSessionUser(): Promise<AuthenticatedUser | null> {
     }
 
     // Check support View-As header/cookie if user is an ADMIN
-    const headerList = await headers();
     const viewAs = headerList.get("x-view-as-role") as 'CUSTOMER' | 'SELLER' | null;
     const effectiveRole = (u.role === 'ADMIN' && viewAs) ? viewAs : (u.role as 'CUSTOMER' | 'SELLER' | 'ADMIN');
 
@@ -67,35 +86,35 @@ export async function getSessionUser(): Promise<AuthenticatedUser | null> {
   }
 }
 
-export async function requireAuth(): Promise<AuthenticatedUser> {
-  const user = await getSessionUser();
+export async function requireAuth(customHeaders?: Headers): Promise<AuthenticatedUser> {
+  const user = await getSessionUser(customHeaders);
   if (!user) {
     throw new Error("UNAUTHORIZED: Sign in required");
   }
   return user;
 }
 
-export async function requireCustomer(): Promise<AuthenticatedUser> {
-  const user = await requireAuth();
+export async function requireCustomer(customHeaders?: Headers): Promise<AuthenticatedUser> {
+  const user = await requireAuth(customHeaders);
   if (user.role !== 'CUSTOMER' && user.role !== 'ADMIN') {
     throw new Error("FORBIDDEN: Customer access required");
   }
   return user;
 }
 
-export async function requireSeller(): Promise<AuthenticatedUser> {
-  const user = await requireAuth();
+export async function requireSeller(customHeaders?: Headers): Promise<AuthenticatedUser> {
+  const user = await requireAuth(customHeaders);
   if (user.role !== 'SELLER' && user.role !== 'ADMIN') {
     throw new Error("FORBIDDEN: Seller access required");
   }
-  if (user.role === 'SELLER' && user.sellerApprovalStatus !== 'APPROVED') {
-    throw new Error("FORBIDDEN: Seller account is pending approval by administrator");
+  if (user.role === 'SELLER' && (user.sellerApprovalStatus !== 'APPROVED' || !user.canteenId)) {
+    throw new Error("FORBIDDEN: Seller account is unapproved or has no assigned canteen");
   }
   return user;
 }
 
-export async function requireAdmin(): Promise<AuthenticatedUser> {
-  const user = await requireAuth();
+export async function requireAdmin(customHeaders?: Headers): Promise<AuthenticatedUser> {
+  const user = await requireAuth(customHeaders);
   if (user.role !== 'ADMIN') {
     throw new Error("FORBIDDEN: Administrator access required");
   }

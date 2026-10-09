@@ -29,9 +29,9 @@ import {
   Shield,
   LogOut,
   Layers,
-  CheckSquare
+  CheckSquare,
+  Menu as MenuIcon
 } from 'lucide-react';
-import { authClient } from '@/lib/auth/auth-client';
 
 interface OrderItem {
   id: string;
@@ -52,7 +52,7 @@ interface Order {
   paymentStatus: string;
   batchId: string;
   customerName: string;
-  customerPhone: string;
+  customerPhone?: string;
   batch: { id: string; displayLabel: string; startTime: string; endTime: string } | null;
   items: OrderItem[];
   createdAt: string;
@@ -72,7 +72,7 @@ interface MenuItem {
   id: string;
   name: string;
   description: string | null;
-  price: string;
+  price: string | null;
   isVegetarian: boolean;
   isAvailable: boolean;
   isTodaysMenu: boolean;
@@ -103,6 +103,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
 }) => {
   // Navigation: 5 sections
   const [tab, setTab] = useState<'ORDERS' | 'PREPARATION' | 'PICKUP' | 'MENU' | 'ACCOUNT'>('ORDERS');
+  const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
 
   // Core Data
   const [ordersList, setOrdersList] = useState<Order[]>([]);
@@ -118,8 +119,9 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   const [portalError, setPortalError] = useState<string | null>(null);
   const [portalSuccess, setPortalSuccess] = useState<string | null>(null);
 
-  // Orders Tab Filter
+  // Orders Tab Filter & Expanded Batches State
   const [ordersFilter, setOrdersFilter] = useState<'REQUESTED' | 'ACTIVE' | 'ALL'>('REQUESTED');
+  const [expandedBatches, setExpandedBatches] = useState<Record<string, boolean>>({});
 
   // Time Suggestion Modal
   const [suggestOrderId, setSuggestOrderId] = useState<string | null>(null);
@@ -129,9 +131,6 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   // Reject Order Modal
   const [rejectOrderId, setRejectOrderId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('Kitchen busy at requested time');
-
-  // Batch Pause State Tracker (local toggle indicator)
-  const [pausedBatches, setPausedBatches] = useState<Record<string, boolean>>({});
 
   // Pickup Verification
   const [pickupCodeInput, setPickupCodeInput] = useState('');
@@ -148,6 +147,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   // Form States for Menu Item
   const [formName, setFormName] = useState('');
   const [formPrice, setFormPrice] = useState('');
+  const [formPriceUnconfirmed, setFormPriceUnconfirmed] = useState(false);
   const [formCategory, setFormCategory] = useState('');
   const [formNewCategory, setFormNewCategory] = useState('');
   const [formDesc, setFormDesc] = useState('');
@@ -273,34 +273,30 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   const handleSuggestTime = async () => {
     if (!suggestOrderId || actionLoading[suggestOrderId]) return;
     clearMessages();
-    const orderId = suggestOrderId;
-    setActionLoading(prev => ({ ...prev, [orderId]: 'SUGGESTING' }));
+    setActionLoading(prev => ({ ...prev, [suggestOrderId]: 'SUGGESTING' }));
 
     try {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const fullIsoTime = `${todayStr}T${suggestTimeStr}:00.000Z`;
-
-      const res = await fetch(`/api/orders/${orderId}`, {
+      const res = await fetch(`/api/orders/${suggestOrderId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'SELLER_SUGGEST_TIME',
-          suggestedTime: fullIsoTime,
-          note: suggestNote.trim() || undefined,
+          suggestedTime: suggestTimeStr,
+          note: suggestNote,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to suggest time.');
-
-      setPortalSuccess(`Suggested new pickup time ${suggestTimeStr} sent to customer.`);
+      setPortalSuccess(`Proposed pickup time (${suggestTimeStr}) sent to customer.`);
       setSuggestOrderId(null);
+      setSuggestNote('');
       await refreshData(false);
     } catch (err: any) {
       setPortalError(err.message);
     } finally {
       setActionLoading(prev => {
         const copy = { ...prev };
-        delete copy[orderId];
+        delete copy[suggestOrderId];
         return copy;
       });
     }
@@ -387,10 +383,6 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
     }
   };
 
-  const togglePauseBatch = (batchId: string) => {
-    setPausedBatches(prev => ({ ...prev, [batchId]: !prev[batchId] }));
-  };
-
   // -------------------------------------------------------------
   // Pickup Verification
   // -------------------------------------------------------------
@@ -463,6 +455,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
     clearMessages();
     setActionLoading(prev => ({ ...prev, [itemId]: 'UPDATING_TODAY' }));
 
+    // Optimistic toggle
     setMenuItems(prev => prev.map(m => (m.id === itemId ? { ...m, isTodaysMenu: !currentVal } : m)));
 
     try {
@@ -471,7 +464,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ itemId, isTodaysMenu: !currentVal }),
       });
-      if (!res.ok) throw new Error('Failed to update Today\'s Menu flag.');
+      if (!res.ok) throw new Error('Failed to update Today\'s Menu status.');
     } catch (err: any) {
       setPortalError(err.message);
       await refreshData(false);
@@ -488,15 +481,23 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
     e.preventDefault();
     clearMessages();
 
-    if (!formName.trim() || !formPrice.trim()) {
-      setPortalError('Item name and price are required.');
+    if (!formName.trim()) {
+      setPortalError('Item name is required.');
       return;
     }
 
-    const priceNum = parseFloat(formPrice);
-    if (isNaN(priceNum) || priceNum < 0) {
-      setPortalError('Please enter a valid price.');
-      return;
+    let priceVal: string | null = null;
+    if (!formPriceUnconfirmed) {
+      if (!formPrice.trim()) {
+        setPortalError('Price is required or check "Price not fixed / unconfirmed".');
+        return;
+      }
+      const priceNum = parseFloat(formPrice);
+      if (isNaN(priceNum) || priceNum < 0) {
+        setPortalError('Please enter a valid price.');
+        return;
+      }
+      priceVal = priceNum.toFixed(2);
     }
 
     const isEdit = Boolean(editingItem);
@@ -511,7 +512,8 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
           body: JSON.stringify({
             itemId: editingItem!.id,
             name: formName.trim(),
-            price: priceNum.toFixed(2),
+            price: priceVal,
+            isAvailable: priceVal === null ? false : editingItem!.isAvailable,
             description: formDesc.trim() || null,
             categoryId: formCategory || undefined,
             imageUrl: formImage.trim() || null,
@@ -527,7 +529,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             name: formName.trim(),
-            price: priceNum.toFixed(2),
+            price: priceVal,
             description: formDesc.trim() || null,
             categoryId: formCategory || undefined,
             categoryName: formCategory ? undefined : formNewCategory.trim() || 'General',
@@ -613,7 +615,8 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   const openEditItemModal = (item: MenuItem) => {
     setEditingItem(item);
     setFormName(item.name);
-    setFormPrice(item.price);
+    setFormPrice(item.price ? item.price : '');
+    setFormPriceUnconfirmed(item.price === null);
     setFormCategory(item.categoryId);
     setFormNewCategory('');
     setFormDesc(item.description || '');
@@ -627,6 +630,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   const resetItemForm = () => {
     setFormName('');
     setFormPrice('');
+    setFormPriceUnconfirmed(false);
     setFormCategory(categories[0]?.id || '');
     setFormNewCategory('');
     setFormDesc('');
@@ -659,7 +663,6 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   const batchOrdersMap = useMemo(() => {
     const map = new Map<string, { batch: Batch; orders: Order[]; itemsTally: Record<string, number> }>();
 
-    // Process orders that are CONFIRMED or PREPARING
     for (const ord of ordersList) {
       if (!['CONFIRMED', 'PREPARING'].includes(ord.status)) continue;
       const bId = ord.batchId || 'unassigned';
@@ -687,6 +690,69 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
     return Array.from(map.values());
   }, [ordersList, batches]);
 
+  // -------------------------------------------------------------
+  // Expandable/Collapsible 15-Minute Batch Groups for Orders Screen
+  // -------------------------------------------------------------
+  const batchGroups = useMemo(() => {
+    const displayList =
+      ordersFilter === 'REQUESTED'
+        ? incomingRequestedOrders
+        : ordersFilter === 'ACTIVE'
+        ? activeOrders
+        : ordersList;
+
+    const groupMap = new Map<string, {
+      batchKey: string;
+      label: string;
+      startTime: string;
+      capacity: number;
+      reservedCount: number;
+      orders: Order[];
+      pendingCount: number;
+      aggregateItems: Record<string, number>;
+    }>();
+
+    for (const ord of displayList) {
+      const bKey = ord.batchId || ord.batch?.startTime || 'unassigned';
+      if (!groupMap.has(bKey)) {
+        const matchedBatch = batches.find(b => b.id === ord.batchId);
+        groupMap.set(bKey, {
+          batchKey: bKey,
+          label: ord.batch?.displayLabel || matchedBatch?.displayLabel || '15-min Batch',
+          startTime: ord.batch?.startTime || matchedBatch?.startTime || '00:00',
+          capacity: matchedBatch?.capacity || 10,
+          reservedCount: matchedBatch?.reservedCount || 0,
+          orders: [],
+          pendingCount: 0,
+          aggregateItems: {},
+        });
+      }
+
+      const grp = groupMap.get(bKey)!;
+      grp.orders.push(ord);
+      if (ord.status === 'REQUESTED') {
+        grp.pendingCount += 1;
+      }
+      for (const it of ord.items) {
+        grp.aggregateItems[it.itemName] = (grp.aggregateItems[it.itemName] || 0) + it.quantity;
+      }
+    }
+
+    return Array.from(groupMap.values()).sort((a, b) => a.startTime.localeCompare(b.startTime));
+  }, [ordersFilter, incomingRequestedOrders, activeOrders, ordersList, batches]);
+
+  const toggleBatchAccordion = (batchKey: string) => {
+    setExpandedBatches(prev => ({
+      ...prev,
+      [batchKey]: prev[batchKey] === undefined ? false : !prev[batchKey]
+    }));
+  };
+
+  const isBatchExpanded = (batchKey: string) => {
+    // Default open if not explicitly toggled
+    return expandedBatches[batchKey] !== false;
+  };
+
   // Filtered Menu Items
   const filteredMenuItems = useMemo(() => {
     if (menuFilterCategory === 'ALL') return menuItems;
@@ -694,15 +760,15 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
     return menuItems.filter(m => m.categoryId === menuFilterCategory);
   }, [menuItems, menuFilterCategory]);
 
-  const format24Time = (isoString?: string | null) => {
+  const format12Time = (isoString?: string | null) => {
     if (!isoString) return '--:--';
     try {
       const d = new Date(isoString);
-      return d.toLocaleTimeString('en-GB', {
+      return d.toLocaleTimeString('en-US', {
         timeZone: 'Asia/Kolkata',
-        hour: '2-digit',
+        hour: 'numeric',
         minute: '2-digit',
-        hour12: false,
+        hour12: true,
       });
     } catch {
       return '--:--';
@@ -716,6 +782,90 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   // -------------------------------------------------------------
   return (
     <div className="min-h-screen bg-background flex flex-col md:flex-row pb-20 md:pb-8">
+      {/* ========================================================= */}
+      {/* MOBILE DRAWER BACKDROP & PANEL */}
+      {/* ========================================================= */}
+      {isMobileDrawerOpen && (
+        <div className="fixed inset-0 z-50 md:hidden flex">
+          <div
+            className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity"
+            onClick={() => setIsMobileDrawerOpen(false)}
+          />
+          <div className="relative flex-1 flex flex-col max-w-xs w-full bg-surface shadow-2xl p-5 border-r border-slate-200 z-10 animate-in slide-in-from-left">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-primary-blue text-white flex items-center justify-center font-bold">
+                  <Store className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-xs font-black text-text-primary">{canteenDisplayName}</h3>
+                  <p className="text-[10px] text-slate-500">Seller Workspace</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsMobileDrawerOpen(false)}
+                className="p-2 rounded-xl text-slate-400 hover:text-slate-700 min-h-[44px] min-w-[44px] flex items-center justify-center"
+                aria-label="Close menu drawer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <nav className="space-y-1 flex-1">
+              {[
+                { id: 'ORDERS', label: 'Orders', icon: ShoppingBag, count: incomingRequestedOrders.length },
+                { id: 'PREPARATION', label: 'Preparation', icon: ChefHat, count: batchOrdersMap.length },
+                { id: 'PICKUP', label: 'Pickup', icon: QrCode, count: readyOrders.length },
+                { id: 'MENU', label: 'Menu', icon: Utensils, count: menuItems.length },
+                { id: 'ACCOUNT', label: 'Account', icon: User, count: 0 },
+              ].map(item => {
+                const Icon = item.icon;
+                const isActive = tab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => {
+                      setTab(item.id as any);
+                      setIsMobileDrawerOpen(false);
+                    }}
+                    className={`w-full flex items-center justify-between px-4 py-3 rounded-xl text-xs font-bold transition min-h-[44px] ${
+                      isActive ? 'bg-primary-blue text-white shadow-tactile' : 'text-slate-600 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Icon className="w-4 h-4" />
+                      <span>{item.label}</span>
+                    </div>
+                    {item.count > 0 && (
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                        isActive ? 'bg-white text-primary-blue' : 'bg-slate-200 text-slate-700'
+                      }`}>
+                        {item.count}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </nav>
+
+            {onLogout && (
+              <div className="pt-4 border-t border-slate-100">
+                <button
+                  onClick={() => {
+                    setIsMobileDrawerOpen(false);
+                    onLogout();
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-bold bg-rose-50 text-danger hover:bg-rose-100 transition min-h-[44px]"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>Sign Out</span>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ========================================================= */}
       {/* DESKTOP SIDEBAR NAVIGATION */}
       {/* ========================================================= */}
@@ -845,12 +995,16 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       {/* MAIN CONTENT AREA */}
       {/* ========================================================= */}
       <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">
-        {/* Top Header: Canteen Operating Status Switcher & Notifications */}
+        {/* Top Header: Hamburger on Mobile + Canteen Operating Status Switcher */}
         <div className="bg-surface rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center text-primary-blue md:hidden">
-              <Store className="w-5 h-5" />
-            </div>
+            <button
+              onClick={() => setIsMobileDrawerOpen(true)}
+              className="p-2 rounded-xl text-slate-600 hover:bg-slate-100 md:hidden min-h-[44px] min-w-[44px] flex items-center justify-center border border-slate-200"
+              aria-label="Open navigation drawer"
+            >
+              <MenuIcon className="w-5 h-5" />
+            </button>
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-black text-text-primary">{canteenDisplayName}</h1>
@@ -863,7 +1017,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                 </span>
               </div>
               <p className="text-xs text-text-secondary mt-0.5">
-                Hours: <span className="font-semibold text-slate-700">08:00 to 17:00</span> (24h) • 15-min Batch Queue
+                Hours: <span className="font-semibold text-slate-700">8:00 AM to 5:00 PM IST</span> • 15-Minute Batch Queue
               </p>
             </div>
           </div>
@@ -938,7 +1092,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
         ) : (
           <>
             {/* ========================================================= */}
-            {/* 1. ORDERS SECTION */}
+            {/* 1. ORDERS SECTION (Expandable/Collapsible 15-min Batches) */}
             {/* ========================================================= */}
             {tab === 'ORDERS' && (
               <div className="space-y-6">
@@ -946,7 +1100,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                   <div>
                     <h2 className="text-base font-extrabold text-text-primary">Order Management</h2>
                     <p className="text-xs text-text-secondary">
-                      Review customer requests with exact pickup times and 15-minute batches.
+                      Grouped by 15-minute preparation batches with exact customer pickup times.
                     </p>
                   </div>
 
@@ -979,148 +1133,192 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                   </div>
                 </div>
 
-                {/* Orders List */}
-                {(() => {
-                  const displayList =
-                    ordersFilter === 'REQUESTED'
-                      ? incomingRequestedOrders
-                      : ordersFilter === 'ACTIVE'
-                      ? activeOrders
-                      : ordersList;
-
-                  if (displayList.length === 0) {
-                    return (
-                      <div className="bg-surface rounded-3xl p-12 text-center border border-slate-200 shadow-sm">
-                        <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mx-auto mb-3">
-                          <Inbox className="w-8 h-8" />
-                        </div>
-                        <h3 className="text-sm font-extrabold text-text-primary">
-                          {ordersFilter === 'REQUESTED' ? 'No incoming requests.' : 'No orders yet.'}
-                        </h3>
-                        <p className="text-xs text-text-secondary mt-1 max-w-sm mx-auto">
-                          {ordersFilter === 'REQUESTED'
-                            ? 'New customer orders waiting for acceptance will appear here.'
-                            : 'Orders placed by customers for this canteen will be displayed here.'}
-                        </p>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div className="grid grid-cols-1 gap-4">
-                      {displayList.map(order => {
-                        const isRequested = order.status === 'REQUESTED';
-                        const exactTime24 = format24Time(order.exactPickupTime);
-                        const batchDisplay = order.batch?.displayLabel || '15-min Batch';
-                        const isAccepting = actionLoading[order.id] === 'ACCEPTING';
-                        const isRejecting = actionLoading[order.id] === 'REJECTING';
-
-                        return (
-                          <div
-                            key={order.id}
-                            className="bg-surface rounded-2xl border border-slate-200 p-5 shadow-sm hover:border-slate-300 transition"
-                          >
-                            {/* Order Header */}
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
-                              <div className="flex items-center gap-3">
-                                <span className="font-mono text-sm font-black text-deep-blue bg-slate-100 px-2.5 py-1 rounded-lg">
-                                  #{order.orderNumber}
-                                </span>
-                                <div>
-                                  <div className="flex items-center gap-2">
-                                    <h4 className="text-xs font-extrabold text-text-primary">{order.customerName}</h4>
-                                    {order.customerPhone && (
-                                      <span className="text-[11px] text-slate-400 flex items-center gap-1">
-                                        <Phone className="w-3 h-3" /> {order.customerPhone}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <p className="text-[11px] text-slate-400 mt-0.5">
-                                    Placed at {format24Time(order.createdAt)}
-                                  </p>
-                                </div>
-                              </div>
-
-                              {/* Exact Time & Batch Tags */}
-                              <div className="flex flex-wrap items-center gap-2">
-                                <div className="px-3 py-1 rounded-xl bg-primary-blue/10 text-primary-blue border border-primary-blue/20 text-xs font-black flex items-center gap-1.5">
-                                  <Clock className="w-3.5 h-3.5" />
-                                  <span>Exact: {exactTime24}</span>
-                                </div>
-                                <div className="px-2.5 py-1 rounded-xl bg-slate-100 text-slate-700 text-xs font-bold flex items-center gap-1.5">
-                                  <Layers className="w-3.5 h-3.5 text-slate-400" />
-                                  <span>Batch: {batchDisplay}</span>
-                                </div>
-                                <span className={`px-2.5 py-1 rounded-xl text-[11px] font-black uppercase ${
-                                  order.status === 'REQUESTED' ? 'bg-amber-100 text-amber-800' :
-                                  order.status === 'ACCEPTED' ? 'bg-blue-100 text-blue-800' :
-                                  order.status === 'CONFIRMED' ? 'bg-emerald-100 text-emerald-800' :
-                                  order.status === 'PREPARING' ? 'bg-purple-100 text-purple-800' :
-                                  order.status === 'READY' ? 'bg-teal-100 text-teal-800' :
-                                  order.status === 'COLLECTED' ? 'bg-slate-100 text-slate-600' :
-                                  'bg-rose-100 text-rose-800'
-                                }`}>
-                                  {order.status}
-                                </span>
-                              </div>
-                            </div>
-
-                            {/* Order Items Breakdown */}
-                            <div className="py-3 space-y-1.5">
-                              {order.items.map((it, idx) => (
-                                <div key={idx} className="flex justify-between items-center text-xs">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-extrabold text-slate-500">{it.quantity}×</span>
-                                    <span className="font-semibold text-text-primary">{it.itemName}</span>
-                                  </div>
-                                  <span className="font-mono text-slate-600">₹{parseFloat(it.subtotal).toFixed(2)}</span>
-                                </div>
-                              ))}
-                              <div className="pt-2 border-t border-slate-100 flex justify-between items-center text-xs font-black">
-                                <span className="text-text-secondary uppercase">Order Total</span>
-                                <span className="text-deep-blue text-sm">₹{parseFloat(order.totalAmount).toFixed(2)}</span>
-                              </div>
-                            </div>
-
-                            {/* Action Buttons for Incoming REQUESTED Orders */}
-                            {isRequested && (
-                              <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-end gap-2">
-                                <button
-                                  onClick={() => {
-                                    setRejectOrderId(order.id);
-                                    setRejectReason('Kitchen currently at capacity');
-                                  }}
-                                  disabled={isAccepting || isRejecting}
-                                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-rose-50 text-rose-700 hover:bg-rose-100 transition min-h-[44px] disabled:opacity-50"
-                                >
-                                  Reject
-                                </button>
-                                <button
-                                  onClick={() => {
-                                    setSuggestOrderId(order.id);
-                                    setSuggestTimeStr(exactTime24);
-                                  }}
-                                  disabled={isAccepting || isRejecting}
-                                  className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-50 text-amber-800 hover:bg-amber-100 transition min-h-[44px] disabled:opacity-50"
-                                >
-                                  Suggest Time
-                                </button>
-                                <button
-                                  onClick={() => handleAcceptOrder(order.id)}
-                                  disabled={isAccepting || isRejecting}
-                                  className="px-5 py-2 rounded-xl text-xs font-extrabold bg-emerald-600 hover:bg-emerald-700 text-white shadow-tactile transition flex items-center gap-2 min-h-[44px] disabled:opacity-50"
-                                >
-                                  {isAccepting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                                  <span>{isAccepting ? 'Accepting...' : 'Accept Order'}</span>
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                {/* Batch-Grouped Orders List */}
+                {batchGroups.length === 0 ? (
+                  <div className="bg-surface rounded-3xl p-12 text-center border border-slate-200 shadow-sm">
+                    <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mx-auto mb-3">
+                      <Inbox className="w-8 h-8" />
                     </div>
-                  );
-                })()}
+                    <h3 className="text-sm font-extrabold text-text-primary">
+                      {ordersFilter === 'REQUESTED' ? 'No incoming requests.' : 'No orders yet in this workspace.'}
+                    </h3>
+                    <p className="text-xs text-text-secondary mt-1 max-w-sm mx-auto">
+                      {ordersFilter === 'REQUESTED'
+                        ? 'New customer orders waiting for acceptance will appear here.'
+                        : 'Orders placed by customers for this canteen will be displayed here.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {batchGroups.map(grp => {
+                      const expanded = isBatchExpanded(grp.batchKey);
+                      const aggregateSummary = Object.entries(grp.aggregateItems)
+                        .map(([name, qty]) => `${qty}× ${name}`)
+                        .join(', ');
+
+                      return (
+                        <div
+                          key={grp.batchKey}
+                          className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden transition"
+                        >
+                          {/* Accordion / Batch Header */}
+                          <div
+                            onClick={() => toggleBatchAccordion(grp.batchKey)}
+                            className="p-4 sm:p-5 bg-gradient-to-r from-slate-50 to-white flex flex-col md:flex-row md:items-center justify-between gap-3 cursor-pointer hover:bg-slate-50/80 transition select-none border-b border-slate-100"
+                          >
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-xl bg-deep-blue text-white flex items-center justify-center font-bold shadow-soft shrink-0">
+                                <Clock className="w-5 h-5" />
+                              </div>
+                              <div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <h3 className="text-sm font-black text-text-primary">{grp.label}</h3>
+                                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-deep-blue">
+                                    {grp.orders.length} order{grp.orders.length !== 1 ? 's' : ''}
+                                  </span>
+                                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-slate-100 text-slate-700">
+                                    Capacity: {grp.reservedCount}/{grp.capacity}
+                                  </span>
+                                  {grp.pendingCount > 0 && (
+                                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-white animate-pulse">
+                                      {grp.pendingCount} Pending Request{grp.pendingCount !== 1 ? 's' : ''}
+                                    </span>
+                                  )}
+                                </div>
+                                {aggregateSummary && (
+                                  <p className="text-[11px] text-slate-500 mt-1 font-medium">
+                                    <span className="font-bold text-slate-700">Kitchen Prep Totals:</span> {aggregateSummary}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between md:justify-end gap-3 pt-2 md:pt-0 border-t md:border-t-0 border-slate-100">
+                              <span className="text-[11px] font-bold text-slate-400">
+                                {expanded ? 'Click to collapse' : 'Click to expand'}
+                              </span>
+                              <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
+                                {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Expanded Order Tickets Grid */}
+                          {expanded && (
+                            <div className="p-4 sm:p-5 bg-slate-50/40">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                {grp.orders.map(order => {
+                                  const isRequested = order.status === 'REQUESTED';
+                                  const exactTime12 = format12Time(order.exactPickupTime);
+                                  const isAccepting = actionLoading[order.id] === 'ACCEPTING';
+                                  const isRejecting = actionLoading[order.id] === 'REJECTING';
+
+                                  return (
+                                    <div
+                                      key={order.id}
+                                      className="bg-white rounded-2xl border-2 border-slate-200/80 p-4 shadow-sm flex flex-col justify-between hover:border-slate-300 transition"
+                                    >
+                                      <div>
+                                        {/* Card Top Row */}
+                                        <div className="flex items-start justify-between gap-2 pb-3 border-b border-slate-100">
+                                          <div>
+                                            <span className="font-mono text-xs font-black text-deep-blue bg-slate-100 px-2 py-0.5 rounded">
+                                              #{order.orderNumber}
+                                            </span>
+                                            <h4 className="text-xs font-black text-text-primary mt-1.5">{order.customerName}</h4>
+                                            {order.customerPhone && (
+                                              <p className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
+                                                <Phone className="w-3 h-3" /> {order.customerPhone}
+                                              </p>
+                                            )}
+                                          </div>
+                                          <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black uppercase ${
+                                            order.status === 'REQUESTED' ? 'bg-amber-100 text-amber-800' :
+                                            order.status === 'ACCEPTED' ? 'bg-blue-100 text-blue-800' :
+                                            order.status === 'CONFIRMED' ? 'bg-emerald-100 text-emerald-800' :
+                                            order.status === 'PREPARING' ? 'bg-purple-100 text-purple-800' :
+                                            order.status === 'READY' ? 'bg-teal-100 text-teal-800' :
+                                            order.status === 'COLLECTED' ? 'bg-slate-100 text-slate-600' :
+                                            'bg-rose-100 text-rose-800'
+                                          }`}>
+                                            {order.status}
+                                          </span>
+                                        </div>
+
+                                        {/* Exact Pickup Time Pill */}
+                                        <div className="my-2.5 p-2 bg-blue-50/70 rounded-xl border border-blue-100/80 flex items-center justify-between text-xs">
+                                          <span className="text-[10px] text-slate-500 font-bold uppercase">Requested Pickup:</span>
+                                          <span className="font-black text-deep-blue flex items-center gap-1">
+                                            <Clock className="w-3.5 h-3.5 text-primary-blue" />
+                                            {exactTime12}
+                                          </span>
+                                        </div>
+
+                                        {/* Items list */}
+                                        <div className="space-y-1 py-1 text-xs">
+                                          {order.items.map((it, idx) => (
+                                            <div key={idx} className="flex justify-between text-slate-700">
+                                              <span>{it.quantity}× {it.itemName}</span>
+                                              <span className="font-mono text-slate-500">₹{parseFloat(it.subtotal).toFixed(2)}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+
+                                      {/* Total and Actions */}
+                                      <div className="mt-3 pt-3 border-t border-slate-100">
+                                        <div className="flex justify-between items-center text-xs font-black mb-3">
+                                          <span className="text-slate-400 uppercase text-[10px]">Order Total:</span>
+                                          <span className="text-deep-blue text-sm">₹{parseFloat(order.totalAmount).toFixed(2)}</span>
+                                        </div>
+
+                                        {isRequested ? (
+                                          <div className="grid grid-cols-3 gap-1.5">
+                                            <button
+                                              onClick={() => {
+                                                setRejectOrderId(order.id);
+                                                setRejectReason('Kitchen busy at requested time');
+                                              }}
+                                              disabled={isAccepting || isRejecting}
+                                              className="py-2 px-1 rounded-xl text-[11px] font-bold bg-rose-50 text-rose-700 hover:bg-rose-100 transition min-h-[44px] disabled:opacity-50 flex items-center justify-center text-center"
+                                            >
+                                              Reject
+                                            </button>
+                                            <button
+                                              onClick={() => {
+                                                setSuggestOrderId(order.id);
+                                                setSuggestTimeStr('11:30');
+                                              }}
+                                              disabled={isAccepting || isRejecting}
+                                              className="py-2 px-1 rounded-xl text-[11px] font-bold bg-amber-50 text-amber-800 hover:bg-amber-100 transition min-h-[44px] disabled:opacity-50 flex items-center justify-center text-center leading-tight"
+                                            >
+                                              Change Time
+                                            </button>
+                                            <button
+                                              onClick={() => handleAcceptOrder(order.id)}
+                                              disabled={isAccepting || isRejecting}
+                                              className="py-2 px-1 rounded-xl text-[11px] font-black bg-emerald-600 hover:bg-emerald-700 text-white shadow-soft transition min-h-[44px] disabled:opacity-50 flex items-center justify-center gap-1"
+                                            >
+                                              {isAccepting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Accept'}
+                                            </button>
+                                          </div>
+                                        ) : (
+                                          <div className="text-[11px] font-bold text-slate-500 text-center py-1">
+                                            Payment: <span className="text-slate-800 uppercase">{order.paymentStatus}</span>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 
@@ -1148,133 +1346,100 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                   </div>
                 ) : (
                   <div className="space-y-6">
-                    {batchOrdersMap.map(({ batch, orders: batchOrders, itemsTally }) => {
-                      const isStarting = actionLoading[batch.id] === 'STARTING';
-                      const isMarkingReady = actionLoading[batch.id] === 'MARKING_BATCH_READY';
-                      const isPaused = Boolean(pausedBatches[batch.id]);
+                    {batchOrdersMap.map(({ batch, orders, itemsTally }) => {
+                      const isBatchStarting = actionLoading[batch.id] === 'STARTING';
+                      const isBatchMarkingReady = actionLoading[batch.id] === 'MARKING_BATCH_READY';
 
                       return (
                         <div
                           key={batch.id}
-                          className="bg-surface rounded-3xl border-2 border-slate-200/90 shadow-md overflow-hidden transition"
+                          className="bg-surface rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden"
                         >
-                          {/* Batch Container Header */}
-                          <div className="bg-gradient-to-r from-slate-50 via-slate-100 to-slate-50 p-5 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                            <div>
-                              <div className="flex items-center gap-3">
-                                <span className="px-3 py-1 bg-deep-blue text-white rounded-xl text-xs font-black tracking-wide">
-                                  BATCH {batch.displayLabel}
-                                </span>
-                                <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                                  isPaused ? 'bg-amber-100 text-amber-800' :
-                                  batch.status === 'PREPARING' ? 'bg-purple-100 text-purple-800' :
-                                  'bg-blue-100 text-blue-800'
-                                }`}>
-                                  ● {isPaused ? 'PAUSED' : batch.status}
-                                </span>
+                          <div className="p-5 bg-gradient-to-r from-slate-50 to-white border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center font-bold shadow-soft">
+                                <Flame className="w-6 h-6" />
                               </div>
-                              <p className="text-xs text-slate-500 mt-1.5 font-medium">
-                                Batch Capacity: <span className="font-bold text-slate-700">{batchOrders.length}</span> / {batch.capacity} orders assigned
-                              </p>
+                              <div>
+                                <h3 className="text-sm font-black text-text-primary">{batch.displayLabel}</h3>
+                                <p className="text-xs text-text-secondary mt-0.5">
+                                  {orders.length} committed order{orders.length !== 1 ? 's' : ''} in production
+                                </p>
+                              </div>
                             </div>
 
-                            {/* Batch Actions */}
-                            <div className="flex flex-wrap items-center gap-2">
+                            <div className="flex items-center gap-2">
                               <button
-                                onClick={() => togglePauseBatch(batch.id)}
-                                className="px-3 py-2 bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1.5 transition min-h-[44px]"
+                                onClick={() => handleStartBatchPrep(batch.id)}
+                                disabled={isBatchStarting || isBatchMarkingReady}
+                                className="px-4 py-2.5 rounded-xl bg-primary-blue hover:bg-blue-600 text-white text-xs font-extrabold shadow-soft transition flex items-center gap-1.5 min-h-[44px] disabled:opacity-50"
                               >
-                                {isPaused ? <Play className="w-3.5 h-3.5 text-emerald-600" /> : <Pause className="w-3.5 h-3.5 text-amber-600" />}
-                                <span>{isPaused ? 'Resume Prep' : 'Pause'}</span>
+                                {isBatchStarting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                                <span>Start All</span>
                               </button>
-
-                              {batch.status !== 'PREPARING' && (
-                                <button
-                                  onClick={() => handleStartBatchPrep(batch.id)}
-                                  disabled={isStarting}
-                                  className="px-4 py-2 bg-primary-blue hover:bg-blue-600 text-white rounded-xl text-xs font-black shadow-tactile flex items-center gap-1.5 transition min-h-[44px] disabled:opacity-50"
-                                >
-                                  {isStarting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                                  <span>{isStarting ? 'Starting...' : 'Start Preparing'}</span>
-                                </button>
-                              )}
-
                               <button
                                 onClick={() => handleMarkBatchReady(batch.id)}
-                                disabled={isMarkingReady}
-                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black shadow-tactile flex items-center gap-1.5 transition min-h-[44px] disabled:opacity-50"
+                                disabled={isBatchStarting || isBatchMarkingReady}
+                                className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-soft transition flex items-center gap-1.5 min-h-[44px] disabled:opacity-50"
                               >
-                                {isMarkingReady && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                                <span>{isMarkingReady ? 'Updating...' : 'Mark Batch Ready'}</span>
+                                {isBatchMarkingReady && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                                <span>Mark Batch Ready</span>
                               </button>
                             </div>
                           </div>
 
-                          {/* Aggregate Item Prep Summary Card */}
-                          <div className="p-5 bg-blue-50/40 border-b border-blue-100/60">
-                            <h4 className="text-[11px] font-black uppercase text-primary-blue tracking-wider mb-2">
-                              Aggregate Food Preparation (Cook in Kitchen):
+                          <div className="p-5">
+                            <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-3">
+                              Aggregated Prep Quantities:
                             </h4>
-                            <div className="flex flex-wrap gap-2">
-                              {Object.entries(itemsTally).map(([itemName, qty], i) => (
+                            <div className="flex flex-wrap gap-2 mb-5">
+                              {Object.entries(itemsTally).map(([itemName, qty]) => (
                                 <div
-                                  key={i}
-                                  className="px-3 py-1.5 rounded-xl bg-white border border-blue-200 text-xs font-extrabold text-slate-800 shadow-sm flex items-center gap-1.5"
+                                  key={itemName}
+                                  className="px-3 py-1.5 bg-amber-50 rounded-xl border border-amber-200/70 text-xs font-black text-amber-900 flex items-center gap-2"
                                 >
-                                  <span className="text-primary-blue font-black">{qty}×</span>
+                                  <span className="w-5 h-5 rounded-lg bg-amber-200 flex items-center justify-center text-[10px]">
+                                    {qty}
+                                  </span>
                                   <span>{itemName}</span>
                                 </div>
                               ))}
                             </div>
-                          </div>
 
-                          {/* Nested Individual Order Tickets */}
-                          <div className="p-5 bg-white space-y-3">
-                            <h4 className="text-[11px] font-black uppercase text-slate-400 tracking-wider">
-                              Individual Order Tickets ({batchOrders.length}):
+                            <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-3">
+                              Order Tickets in this Batch:
                             </h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                              {batchOrders.map(ord => {
-                                const isItemMarkingReady = actionLoading[ord.id] === 'MARKING_READY';
-                                return (
-                                  <div
-                                    key={ord.id}
-                                    className="p-4 rounded-2xl bg-slate-50 border border-slate-200/80 hover:bg-slate-100/60 transition flex flex-col justify-between"
-                                  >
-                                    <div>
-                                      <div className="flex items-center justify-between gap-2 pb-2 border-b border-slate-200/60">
-                                        <span className="font-mono text-xs font-black text-deep-blue">
-                                          #{ord.orderNumber}
-                                        </span>
-                                        <span className="px-2 py-0.5 rounded-lg bg-primary-blue/10 text-primary-blue text-[11px] font-black">
-                                          Requested: {format24Time(ord.exactPickupTime)}
-                                        </span>
-                                      </div>
-                                      <p className="text-xs font-bold text-text-primary mt-2">{ord.customerName}</p>
-                                      <div className="mt-1.5 space-y-0.5 text-xs text-slate-600">
-                                        {ord.items.map((it, idx) => (
-                                          <div key={idx}>
-                                            {it.quantity}× {it.itemName}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-
-                                    <div className="mt-4 pt-2 border-t border-slate-200/60 flex items-center justify-between">
-                                      <span className="text-xs font-black text-deep-blue">
-                                        ₹{parseFloat(ord.totalAmount).toFixed(2)}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                              {orders.map(ord => (
+                                <div
+                                  key={ord.id}
+                                  className="p-3.5 bg-slate-50/70 rounded-2xl border border-slate-200/70 flex flex-col justify-between"
+                                >
+                                  <div>
+                                    <div className="flex justify-between items-center text-xs">
+                                      <span className="font-mono font-black text-slate-700">#{ord.orderNumber}</span>
+                                      <span className="text-[11px] font-bold text-primary-blue">
+                                        {format12Time(ord.exactPickupTime)}
                                       </span>
-                                      <button
-                                        onClick={() => handleMarkOrderReady(ord.id)}
-                                        disabled={isItemMarkingReady}
-                                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold shadow-sm transition min-h-[36px] disabled:opacity-50"
-                                      >
-                                        {isItemMarkingReady ? 'Updating...' : 'Mark Ready'}
-                                      </button>
+                                    </div>
+                                    <h5 className="text-xs font-bold text-text-primary mt-1">{ord.customerName}</h5>
+                                    <div className="mt-2 space-y-0.5 text-xs text-slate-600">
+                                      {ord.items.map((it, idx) => (
+                                        <div key={idx}>{it.quantity}× {it.itemName}</div>
+                                      ))}
                                     </div>
                                   </div>
-                                );
-                              })}
+                                  <div className="mt-3 pt-2 border-t border-slate-200 flex justify-between items-center">
+                                    <span className="text-xs font-black text-deep-blue">₹{parseFloat(ord.totalAmount).toFixed(2)}</span>
+                                    <button
+                                      onClick={() => handleMarkOrderReady(ord.id)}
+                                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold min-h-[36px]"
+                                    >
+                                      Mark Ready
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
                           </div>
                         </div>
@@ -1297,59 +1462,77 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                   </p>
                 </div>
 
-                {/* Verification Box */}
-                <div className="bg-surface rounded-3xl p-6 border-2 border-primary-blue/30 shadow-md max-w-2xl">
+                {/* Counter Verification Card (Aligned & Accessible) */}
+                <div className="bg-surface rounded-3xl p-6 border-2 border-primary-blue/30 shadow-md max-w-3xl">
                   <div className="flex items-center gap-3 mb-4">
-                    <div className="w-10 h-10 rounded-xl bg-primary-blue/10 text-primary-blue flex items-center justify-center">
+                    <div className="w-10 h-10 rounded-xl bg-primary-blue/10 text-primary-blue flex items-center justify-center shrink-0">
                       <QrCode className="w-6 h-6" />
                     </div>
                     <div>
                       <h3 className="text-sm font-black text-text-primary">Counter Code Verification</h3>
                       <p className="text-xs text-text-secondary">
-                        Enter the 4-character code shown on the customer's phone.
+                        Enter the 4-character code shown on the customer's phone to release order.
                       </p>
                     </div>
                   </div>
 
-                  <div className="flex flex-col sm:flex-row gap-3">
-                    <input
-                      type="text"
-                      maxLength={4}
-                      value={pickupCodeInput}
-                      onChange={e => setPickupCodeInput(e.target.value.toUpperCase())}
-                      placeholder="e.g. 29DL"
-                      className="flex-1 px-4 py-3.5 text-center text-2xl font-mono font-black tracking-widest uppercase rounded-2xl border-2 border-slate-200 focus:border-primary-blue focus:outline-none min-h-[48px]"
-                    />
-                    <select
-                      value={verifyTargetOrderId || ''}
-                      onChange={e => setVerifyTargetOrderId(e.target.value || null)}
-                      className="px-3 py-3 rounded-2xl border border-slate-200 text-xs font-bold bg-white focus:outline-none min-h-[48px]"
-                    >
-                      <option value="">Select Ready Order...</option>
-                      {readyOrders.map(o => (
-                        <option key={o.id} value={o.id}>
-                          #{o.orderNumber} - {o.customerName} (₹{parseFloat(o.totalAmount).toFixed(2)})
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      onClick={() => {
-                        if (!verifyTargetOrderId) {
-                          setPortalError('Please select which ready order you are verifying.');
-                          return;
-                        }
-                        handleVerifyPickupCode(verifyTargetOrderId, pickupCodeInput);
-                      }}
-                      disabled={!pickupCodeInput.trim() || !verifyTargetOrderId}
-                      className="px-6 py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-black shadow-tactile transition disabled:opacity-50 min-h-[48px] shrink-0"
-                    >
-                      Verify & Complete
-                    </button>
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
+                    <div className="sm:col-span-4">
+                      <label className="text-[11px] font-bold text-slate-500 block mb-1">Pickup Code:</label>
+                      <input
+                        type="text"
+                        maxLength={4}
+                        value={pickupCodeInput}
+                        onChange={e => setPickupCodeInput(e.target.value.toUpperCase())}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter' && verifyTargetOrderId && pickupCodeInput.trim()) {
+                            handleVerifyPickupCode(verifyTargetOrderId, pickupCodeInput);
+                          }
+                        }}
+                        placeholder="e.g. 29DL"
+                        className="w-full px-4 py-3 text-center text-xl font-mono font-black tracking-widest uppercase rounded-2xl border-2 border-slate-200 focus:border-primary-blue focus:outline-none min-h-[48px]"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-5">
+                      <label className="text-[11px] font-bold text-slate-500 block mb-1">Select Ready Order:</label>
+                      <select
+                        value={verifyTargetOrderId || ''}
+                        onChange={e => setVerifyTargetOrderId(e.target.value || null)}
+                        className="w-full px-3 py-3 rounded-2xl border border-slate-200 text-xs font-bold bg-white focus:outline-none min-h-[48px]"
+                      >
+                        <option value="">Select Ready Order ({readyOrders.length} ready)...</option>
+                        {readyOrders.map(o => (
+                          <option key={o.id} value={o.id}>
+                            #{o.orderNumber} - {o.customerName} ({format12Time(o.exactPickupTime)})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="sm:col-span-3 sm:self-end">
+                      <button
+                        onClick={() => {
+                          if (!verifyTargetOrderId) {
+                            setPortalError('Please select which ready order you are verifying.');
+                            return;
+                          }
+                          handleVerifyPickupCode(verifyTargetOrderId, pickupCodeInput);
+                        }}
+                        disabled={!pickupCodeInput.trim() || !verifyTargetOrderId || actionLoading[verifyTargetOrderId] === 'VERIFYING'}
+                        className="w-full py-3.5 px-4 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-xs font-black shadow-tactile transition disabled:opacity-50 min-h-[48px] flex items-center justify-center gap-1.5"
+                      >
+                        {verifyTargetOrderId && actionLoading[verifyTargetOrderId] === 'VERIFYING' && (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        )}
+                        <span>Verify & Complete</span>
+                      </button>
+                    </div>
                   </div>
 
                   {verifyAttemptsLeft !== null && (
-                    <p className="text-xs text-rose-600 font-bold mt-2">
-                      ⚠️ Incorrect code. {verifyAttemptsLeft} attempt(s) remaining before security lockout.
+                    <p className="text-xs text-rose-600 font-bold mt-3">
+                      ⚠️ Incorrect pickup code. {verifyAttemptsLeft} attempt(s) remaining before security lockout.
                     </p>
                   )}
                 </div>
@@ -1405,7 +1588,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                               </div>
                               <h4 className="text-xs font-extrabold text-text-primary mt-2.5">{ord.customerName}</h4>
                               <p className="text-[11px] text-slate-500">
-                                Exact Pickup: <span className="font-bold text-slate-700">{format24Time(ord.exactPickupTime)}</span>
+                                Exact Pickup: <span className="font-bold text-slate-700">{format12Time(ord.exactPickupTime)}</span>
                               </p>
                               <div className="mt-2 text-xs text-slate-600 space-y-0.5">
                                 {ord.items.map((it, idx) => (
@@ -1472,7 +1655,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                   <div>
                     <h2 className="text-base font-extrabold text-text-primary">Menu Management</h2>
                     <p className="text-xs text-text-secondary">
-                      Add, edit, change prices, toggle stock, and manage daily order limits.
+                      Add, edit, change prices, toggle availability, and configure Today's Menu.
                     </p>
                   </div>
 
@@ -1537,7 +1720,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                   </div>
                 )}
 
-                {/* Empty State for Fresh Workspace (Requirement 3 & 18) */}
+                {/* Empty State for Fresh Workspace */}
                 {menuItems.length === 0 ? (
                   <div className="bg-surface rounded-3xl p-12 text-center border border-slate-200 shadow-sm max-w-lg mx-auto">
                     <div className="w-16 h-16 rounded-2xl bg-blue-50 text-primary-blue flex items-center justify-center mx-auto mb-3 shadow-inner">
@@ -1584,7 +1767,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                 </span>
                               </div>
                               <span className="font-mono text-sm font-black text-deep-blue">
-                                ₹{parseFloat(item.price).toFixed(2)}
+                                {item.price !== null ? `₹${parseFloat(item.price).toFixed(2)}` : 'Price not fixed'}
                               </span>
                             </div>
 
@@ -1606,7 +1789,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                               </span>
                               <button
                                 onClick={() => handleToggleItemAvailability(item.id, item.isAvailable)}
-                                disabled={isAvailUpdating}
+                                disabled={isAvailUpdating || item.price === null}
                                 className={`w-12 h-6 rounded-full transition p-1 flex items-center ${
                                   item.isAvailable ? 'bg-emerald-600 justify-end' : 'bg-slate-300 justify-start'
                                 }`}
@@ -1657,157 +1840,67 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
             )}
 
             {/* ========================================================= */}
-            {/* 5. ACCOUNT SECTION (Requirement 19) */}
+            {/* 5. ACCOUNT SECTION (Seller Credentials & Sign Out) */}
             {/* ========================================================= */}
             {tab === 'ACCOUNT' && (
               <div className="space-y-6 max-w-2xl">
                 <div>
-                  <h2 className="text-base font-extrabold text-text-primary">Seller Account</h2>
+                  <h2 className="text-base font-extrabold text-text-primary">Seller Account & Canteen Setup</h2>
                   <p className="text-xs text-text-secondary">
-                    Operational information and account preferences.
+                    Review your authenticated credentials, assigned canteen, and operating configuration.
                   </p>
                 </div>
 
-                <div className="bg-surface rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
-                  <div className="flex items-center gap-3 pb-4 border-b border-slate-100">
-                    <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-deep-blue to-primary-blue text-white flex items-center justify-center font-black text-lg">
-                      {user.name ? user.name.charAt(0).toUpperCase() : 'S'}
+                <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 space-y-4">
+                  <div className="flex items-center gap-4 pb-4 border-b border-slate-100">
+                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-deep-blue to-primary-blue text-white font-black text-xl flex items-center justify-center shadow-soft">
+                      {user?.name?.charAt(0)?.toUpperCase() || 'S'}
                     </div>
                     <div>
-                      <h3 className="text-sm font-black text-text-primary">{user.name}</h3>
-                      <p className="text-xs font-mono font-bold text-primary-blue">{user.username}</p>
+                      <h3 className="text-base font-extrabold text-text-primary">{user?.name}</h3>
+                      <p className="text-xs font-mono text-slate-500">{user?.username}</p>
+                      <span className="inline-block mt-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-deep-blue uppercase">
+                        Approved Seller
+                      </span>
                     </div>
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
-                    <div>
-                      <span className="text-slate-400 font-bold uppercase text-[10px]">Canteen Workspace</span>
-                      <p className="font-extrabold text-slate-800 mt-0.5">{canteenDisplayName}</p>
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                      <span className="text-[10px] text-slate-400 block font-semibold">Assigned Canteen</span>
+                      <span className="font-extrabold text-slate-800">{canteenDisplayName}</span>
                     </div>
-                    <div>
-                      <span className="text-slate-400 font-bold uppercase text-[10px]">Location</span>
-                      <p className="font-extrabold text-slate-800 mt-0.5">{canteenData?.location || 'Campus Food Court'}</p>
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                      <span className="text-[10px] text-slate-400 block font-semibold">Campus</span>
+                      <span className="font-extrabold text-slate-800">Indraprastha College for Women</span>
                     </div>
-                    <div>
-                      <span className="text-slate-400 font-bold uppercase text-[10px]">Operating Hours</span>
-                      <p className="font-extrabold text-slate-800 mt-0.5">08:00 to 17:00 (24h)</p>
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                      <span className="text-[10px] text-slate-400 block font-semibold">Scheduled Operating Hours</span>
+                      <span className="font-extrabold text-slate-800">8:00 AM to 5:00 PM IST (Asia/Kolkata)</span>
                     </div>
-                    <div>
-                      <span className="text-slate-400 font-bold uppercase text-[10px]">Mobile Number</span>
-                      <p className="font-extrabold text-slate-800 mt-0.5">{user.phoneNumber || '--'}</p>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 font-bold uppercase text-[10px]">Batch Capacity Limit</span>
-                      <p className="font-extrabold text-slate-800 mt-0.5">{canteenData?.defaultBatchCapacity || 10} orders / 15-min</p>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 font-bold uppercase text-[10px]">College Email</span>
-                      <p className="font-extrabold text-slate-800 mt-0.5">
-                        {user.email && !user.email.includes('@ipcw.du.ac.in') ? user.email : user.email || ''}
-                      </p>
+                    <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                      <span className="text-[10px] text-slate-400 block font-semibold">Batch Queue Interval</span>
+                      <span className="font-extrabold text-slate-800">15-Minute Windows</span>
                     </div>
                   </div>
 
-                  {/* Sign Out Action */}
-                  <div className="pt-6 border-t border-slate-100 flex justify-end">
-                    <button
-                      onClick={async () => {
-                        if (onLogout) onLogout();
-                        else {
-                          try {
-                            await authClient.signOut();
-                          } catch {}
-                          window.location.reload();
-                        }
-                      }}
-                      className="px-5 py-2.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-black transition flex items-center gap-2 min-h-[44px]"
-                    >
-                      <LogOut className="w-4 h-4" />
-                      <span>Sign Out</span>
-                    </button>
-                  </div>
+                  {onLogout && (
+                    <div className="pt-4 border-t border-slate-100">
+                      <button
+                        onClick={onLogout}
+                        className="w-full flex items-center justify-center gap-2 py-3 px-4 rounded-xl text-xs font-bold bg-rose-50 text-danger hover:bg-rose-100 transition min-h-[44px]"
+                      >
+                        <LogOut className="w-4 h-4" />
+                        <span>Sign Out of Seller Portal</span>
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
           </>
         )}
       </main>
-
-      {/* ========================================================= */}
-      {/* MOBILE BOTTOM NAVIGATION BAR */}
-      {/* ========================================================= */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-surface border-t border-slate-200 px-2 py-1.5 flex justify-around items-center z-40 shadow-lg">
-        <button
-          onClick={() => setTab('ORDERS')}
-          className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[10px] font-bold min-h-[44px] ${
-            tab === 'ORDERS' ? 'text-primary-blue' : 'text-slate-500'
-          }`}
-        >
-          <div className="relative">
-            <ShoppingBag className="w-5 h-5" />
-            {incomingRequestedOrders.length > 0 && (
-              <span className="absolute -top-1 -right-2 bg-rose-500 text-white rounded-full text-[9px] font-black w-4 h-4 flex items-center justify-center">
-                {incomingRequestedOrders.length}
-              </span>
-            )}
-          </div>
-          <span className="mt-0.5">Orders</span>
-        </button>
-
-        <button
-          onClick={() => setTab('PREPARATION')}
-          className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[10px] font-bold min-h-[44px] ${
-            tab === 'PREPARATION' ? 'text-primary-blue' : 'text-slate-500'
-          }`}
-        >
-          <div className="relative">
-            <ChefHat className="w-5 h-5" />
-            {batchOrdersMap.length > 0 && (
-              <span className="absolute -top-1 -right-2 bg-amber-500 text-white rounded-full text-[9px] font-black w-4 h-4 flex items-center justify-center">
-                {batchOrdersMap.length}
-              </span>
-            )}
-          </div>
-          <span className="mt-0.5">Prep</span>
-        </button>
-
-        <button
-          onClick={() => setTab('PICKUP')}
-          className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[10px] font-bold min-h-[44px] ${
-            tab === 'PICKUP' ? 'text-primary-blue' : 'text-slate-500'
-          }`}
-        >
-          <div className="relative">
-            <QrCode className="w-5 h-5" />
-            {readyOrders.length > 0 && (
-              <span className="absolute -top-1 -right-2 bg-emerald-500 text-white rounded-full text-[9px] font-black w-4 h-4 flex items-center justify-center">
-                {readyOrders.length}
-              </span>
-            )}
-          </div>
-          <span className="mt-0.5">Pickup</span>
-        </button>
-
-        <button
-          onClick={() => setTab('MENU')}
-          className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[10px] font-bold min-h-[44px] ${
-            tab === 'MENU' ? 'text-primary-blue' : 'text-slate-500'
-          }`}
-        >
-          <Utensils className="w-5 h-5" />
-          <span className="mt-0.5">Menu</span>
-        </button>
-
-        <button
-          onClick={() => setTab('ACCOUNT')}
-          className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl text-[10px] font-bold min-h-[44px] ${
-            tab === 'ACCOUNT' ? 'text-primary-blue' : 'text-slate-500'
-          }`}
-        >
-          <User className="w-5 h-5" />
-          <span className="mt-0.5">Account</span>
-        </button>
-      </nav>
 
       {/* ========================================================= */}
       {/* MODAL: TIME SUGGESTION */}
@@ -1817,13 +1910,13 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
           <div className="bg-surface rounded-3xl p-6 max-w-sm w-full border border-slate-200 shadow-xl animate-scaleUp">
             <h3 className="text-sm font-black text-text-primary">Suggest Different Pickup Time</h3>
             <p className="text-xs text-text-secondary mt-1">
-              Choose an alternative time (08:00 to 17:00). Customer will accept or decline.
+              Choose an alternative time (8:00 AM to 5:00 PM IST). Customer will review.
             </p>
 
             <div className="mt-4 space-y-3">
               <div>
                 <label className="text-[11px] font-bold text-slate-600 block mb-1">
-                  Proposed Time (24h format):
+                  Proposed Time (24h internal):
                 </label>
                 <input
                   type="time"
@@ -1937,7 +2030,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Masala Dosa"
+                  placeholder="e.g. Lemon Rice + Sambar"
                   value={formName}
                   onChange={e => setFormName(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:border-primary-blue min-h-[44px]"
@@ -1946,16 +2039,28 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">Price (₹) *</label>
+                  <label className="font-bold text-slate-700 block mb-1">Price (₹)</label>
                   <input
                     type="number"
                     step="0.50"
-                    required
-                    placeholder="e.g. 50"
+                    disabled={formPriceUnconfirmed}
+                    placeholder={formPriceUnconfirmed ? 'Price not fixed' : 'e.g. 50'}
                     value={formPrice}
                     onChange={e => setFormPrice(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:border-primary-blue min-h-[44px]"
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:border-primary-blue min-h-[44px] disabled:bg-slate-100"
                   />
+                  <label className="flex items-center gap-1.5 mt-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formPriceUnconfirmed}
+                      onChange={e => {
+                        setFormPriceUnconfirmed(e.target.checked);
+                        if (e.target.checked) setFormPrice('');
+                      }}
+                      className="w-3.5 h-3.5 rounded"
+                    />
+                    <span className="text-[10px] text-slate-500 font-semibold">Price not confirmed</span>
+                  </label>
                 </div>
                 <div>
                   <label className="font-bold text-slate-700 block mb-1">Order Limit / Day</label>

@@ -51,8 +51,29 @@ async function runSmokeTest() {
     }
   }
 
+  // --- Step 0: Seller Opens Canteen Early (Before 8:00 AM IST) ---
+  console.log('--- Phase 0: Seller Early Opening ---');
+  const sellerClient = new SessionClient();
+  const sellerLoginRes = await sellerClient.request('/api/auth/sign-in/username', {
+    method: 'POST',
+    body: JSON.stringify({
+      username: 'slr/soman_singh',
+      password: 'password123',
+    }),
+  });
+  const sellerLoginData = await sellerLoginRes.json();
+  assertTest(sellerLoginRes.ok && sellerLoginData.user?.role === 'SELLER', 'Seller authentication succeeded (slr/soman_singh)');
+
+  // Open canteen manually
+  const openStatusRes = await sellerClient.request('/api/canteen/status', {
+    method: 'POST',
+    body: JSON.stringify({ manualOverrideStatus: 'OPEN' }),
+  });
+  const openStatusData = await openStatusRes.json();
+  assertTest(openStatusRes.ok && openStatusData.effectiveStatus === 'OPEN', 'Canteen manually opened early (Effective Status: OPEN)');
+
   // --- Step 1: Customer Flow ---
-  console.log('--- Phase 1: Customer Login & Menu Exploration ---');
+  console.log('\n--- Phase 1: Customer Login & Menu Exploration ---');
   const customerClient = new SessionClient();
   const custLoginRes = await customerClient.request('/api/auth/sign-in/username', {
     method: 'POST',
@@ -69,7 +90,7 @@ async function runSmokeTest() {
   const menuData = await menuRes.json();
   assertTest(menuRes.ok && Array.isArray(menuData.items) && menuData.items.length > 0, `Menu loaded with ${menuData.items?.length} items`);
 
-  const dosaItem = menuData.items.find((i: any) => i.name.includes('Dosa')) || menuData.items[0];
+  const testItem = menuData.items.find((i: any) => i.isAvailable && i.price !== null) || menuData.items[0];
 
   // Submit Order
   console.log('\n--- Phase 2: Customer Place Order Request ---');
@@ -77,8 +98,8 @@ async function runSmokeTest() {
   const orderRes = await customerClient.request('/api/orders', {
     method: 'POST',
     body: JSON.stringify({
-      items: [{ menuItemId: dosaItem.id, quantity: 2 }],
-      exactPickupTime: `${todayStr}T06:15:00.000Z`, // 11:45 AM IST
+      items: [{ menuItemId: testItem.id, quantity: 2 }],
+      exactPickupTime: `${todayStr}T06:15:00.000Z`, // 11:45 AM IST (in operating hours)
       idempotencyKey: `smoke_ord_${Date.now()}`,
     }),
   });
@@ -87,24 +108,12 @@ async function runSmokeTest() {
     console.error('Order creation error response:', orderRes.status, orderData);
   }
   assertTest(orderRes.ok && orderData.success && orderData.order?.status === 'REQUESTED', `Order #${orderData.order?.orderNumber} created with status REQUESTED`);
-  assertTest(Boolean(orderData.pickupCode) && orderData.pickupCode.length === 4, `Secure 4-character pickup code received: [${orderData.pickupCode}]`);
+  assertTest(!orderData.pickupCode, 'Pickup code is strictly withheld before payment (Security Verified)');
 
   const createdOrderId = orderData.order.id;
-  const plaintextCode = orderData.pickupCode;
 
   // --- Step 2: Seller Flow ---
-  console.log('\n--- Phase 3: Seller Login & Order Acceptance ---');
-  const sellerClient = new SessionClient();
-  const sellerLoginRes = await sellerClient.request('/api/auth/sign-in/username', {
-    method: 'POST',
-    body: JSON.stringify({
-      username: 'slr/soman_singh',
-      password: 'password123',
-    }),
-  });
-  const sellerLoginData = await sellerLoginRes.json();
-  assertTest(sellerLoginRes.ok && sellerLoginData.user?.role === 'SELLER', 'Seller authentication succeeded (slr/soman_singh)');
-
+  console.log('\n--- Phase 3: Seller Order Queue & Acceptance ---');
   // Seller sees orders
   const sellerOrdersRes = await sellerClient.request('/api/orders');
   const sellerOrdersData = await sellerOrdersRes.json();
@@ -120,16 +129,18 @@ async function runSmokeTest() {
   assertTest(acceptRes.ok && acceptData.result?.status === 'ACCEPTED', 'Seller accepted requested pickup time (Status: ACCEPTED)');
 
   // --- Step 3: Customer Payment Flow ---
-  console.log('\n--- Phase 4: Customer Razorpay Payment Flow ---');
+  console.log('\n--- Phase 4: Customer Payment Flow ---');
   const payRes = await customerClient.request(`/api/orders/${createdOrderId}/pay`, {
     method: 'POST',
     body: JSON.stringify({
-      providerPaymentId: `pay_rzp_smoke_${Date.now()}`,
-      providerOrderId: `order_rzp_smoke_${Date.now()}`,
+      providerPaymentId: `pay_smoke_${Date.now()}`,
+      providerOrderId: `ord_smoke_${Date.now()}`,
     }),
   });
   const payData = await payRes.json();
   assertTest(payRes.ok && payData.order?.status === 'CONFIRMED' && payData.order?.paymentStatus === 'PAID', 'Payment confirmed server-side (Status: CONFIRMED, Payment: PAID)');
+  assertTest(Boolean(payData.pickupCode) && payData.pickupCode.length === 4, `Secure 4-character pickup code generated upon payment: [${payData.pickupCode}]`);
+  const plaintextCode = payData.pickupCode;
 
   // --- Step 4: Kitchen Preparation & Ready ---
   console.log('\n--- Phase 5: Kitchen Cooking & Ready Flow ---');
