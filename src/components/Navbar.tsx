@@ -222,23 +222,36 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </button>
 
                 {showProfileMenu && (
-                  <div className="absolute right-0 mt-2 w-56 bg-white rounded-2xl shadow-tactile border border-slate-200 p-2 z-50">
-                    <div className="px-3 py-2 border-b border-slate-100">
+                  <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-tactile border border-slate-200 p-3 z-50 animate-in fade-in zoom-in-95">
+                    <div className="px-2 pb-3 border-b border-slate-100">
                       <p className="text-xs font-bold text-text-primary">{user.name}</p>
-                      <p className="text-[11px] text-text-secondary">{user.username}</p>
-                      <span className="inline-block mt-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-700 uppercase">
-                        {user.effectiveRole}
-                      </span>
+                      <p className="text-[11px] font-mono text-text-secondary mt-0.5">{user.username}</p>
+                      <div className="mt-2 pt-2 border-t border-slate-50 space-y-1 text-[11px] text-slate-500">
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-400">Account Type:</span>
+                          <span className="font-bold text-slate-800 uppercase px-2 py-0.5 bg-slate-100 rounded text-[10px]">
+                            {user.effectiveRole}
+                          </span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-400">Campus:</span>
+                          <span className="font-semibold text-slate-700">IPCW (Delhi Univ.)</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span className="text-slate-400">Canteen:</span>
+                          <span className="font-semibold text-deep-blue">IP Canteen</span>
+                        </div>
+                      </div>
                     </div>
                     <button
                       onClick={() => {
                         setShowProfileMenu(false);
                         onLogout();
                       }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-semibold text-danger hover:bg-red-50 rounded-xl transition mt-1"
+                      className="w-full flex items-center justify-center gap-2 px-3 py-2.5 text-xs font-bold text-danger hover:bg-rose-50 rounded-xl transition mt-2 min-h-[44px]"
                     >
                       <LogOut className="w-4 h-4" />
-                      Sign Out
+                      <span>Sign Out</span>
                     </button>
                   </div>
                 )}

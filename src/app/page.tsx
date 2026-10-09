@@ -135,7 +135,7 @@ export default function Home() {
 
       <main className="flex-1">
         {effectiveRole === 'CUSTOMER' && (
-          <CustomerPortal user={currentUser} canteenStatus={canteenStatus} />
+          <CustomerPortal user={currentUser} canteenStatus={canteenStatus} onLogout={handleLogout} />
         )}
         {effectiveRole === 'SELLER' && (
           <SellerPortal
@@ -146,7 +146,7 @@ export default function Home() {
           />
         )}
         {effectiveRole === 'ADMIN' && (
-          <AdminPortal onSwitchViewAs={(role) => setViewAsRole(role)} />
+          <AdminPortal onSwitchViewAs={(role) => setViewAsRole(role)} onLogout={handleLogout} />
         )}
       </main>
 

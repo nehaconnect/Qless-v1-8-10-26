@@ -1,6 +1,6 @@
 import { auth } from "./auth";
 import { headers } from "next/headers";
-import { db, sellerProfiles, customerProfiles } from "@/lib/db";
+import { db, user, sellerProfiles, customerProfiles } from "@/lib/db";
 import { eq } from "drizzle-orm";
 
 export interface AuthenticatedUser {
@@ -27,6 +27,15 @@ export async function getSessionUser(): Promise<AuthenticatedUser | null> {
     }
 
     const u = session.user as any;
+
+    // Reject inactive or deleted accounts
+    const userInDb = await db.query.user.findFirst({
+      where: eq(user.id, u.id),
+    });
+    if (!userInDb || !userInDb.isActive) {
+      return null;
+    }
+
     let canteenId: string | undefined;
     let collegeId: string | undefined;
     let sellerApprovalStatus: string | undefined;
@@ -88,8 +97,8 @@ export async function requireSeller(): Promise<AuthenticatedUser> {
   if (user.role !== 'SELLER' && user.role !== 'ADMIN') {
     throw new Error("FORBIDDEN: Seller access required");
   }
-  if (user.role === 'SELLER' && user.sellerApprovalStatus !== 'APPROVED') {
-    throw new Error("FORBIDDEN: Seller account is pending approval by administrator");
+  if (user.role === 'SELLER' && (user.sellerApprovalStatus !== 'APPROVED' || !user.canteenId)) {
+    throw new Error("FORBIDDEN: Seller account is unapproved or has no assigned canteen");
   }
   return user;
 }

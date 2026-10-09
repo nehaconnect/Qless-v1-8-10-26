@@ -142,6 +142,8 @@ export const canteens = pgTable(
     defaultBatchCapacity: integer("default_batch_capacity").default(10).notNull(),
     upiId: varchar("upi_id", { length: 100 }),
     phone: varchar("phone", { length: 20 }),
+    manualOverrideStatus: varchar("manual_override_status", { length: 20 }), // 'OPEN' | 'TOO_BUSY' | 'CLOSED'
+    manualOverrideDate: varchar("manual_override_date", { length: 20 }), // YYYY-MM-DD
     isActive: boolean("is_active").default(true).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -185,6 +187,9 @@ export const sellerProfiles = pgTable(
       "chk_seller_approval_status",
       sql`${table.approvalStatus} IN ('PENDING_APPROVAL', 'APPROVED', 'REJECTED')`
     ),
+    uniqueIndex("uidx_canteen_approved_seller")
+      .on(table.canteenId)
+      .where(sql`${table.approvalStatus} = 'APPROVED'`),
     index("idx_seller_profiles_canteen").on(table.canteenId, table.approvalStatus),
   ]
 );
@@ -220,7 +225,7 @@ export const menuItems = pgTable(
       .references(() => menuCategories.id, { onDelete: "restrict" }),
     name: varchar("name", { length: 255 }).notNull(),
     description: text("description"),
-    price: numeric("price", { precision: 10, scale: 2 }).notNull(),
+    price: numeric("price", { precision: 10, scale: 2 }), // Nullable for items with price not fixed
     isVegetarian: boolean("is_vegetarian").default(true).notNull(),
     imageUrl: text("image_url"),
     isAvailable: boolean("is_available").default(true).notNull(), // Instant Sold-Out Switch
@@ -234,7 +239,7 @@ export const menuItems = pgTable(
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
-    check("chk_menu_items_price", sql`${table.price} >= 0`),
+    check("chk_menu_items_price", sql`${table.price} IS NULL OR ${table.price} >= 0`),
     check("chk_menu_items_stock", sql`${table.currentStock} >= 0`),
     index("idx_menu_items_canteen_avail").on(
       table.canteenId,
@@ -386,6 +391,7 @@ export const pickupCodes = pgTable(
       .notNull()
       .references(() => orders.id, { onDelete: "cascade" }),
     codeHash: text("code_hash").notNull(), // Cryptographic hash ONLY. Zero plaintext storage.
+    encryptedCode: text("encrypted_code"), // AES-256-GCM encrypted ciphertext (never plaintext)
     isVerified: boolean("is_verified").default(false).notNull(),
     failedAttempts: integer("failed_attempts").default(0).notNull(),
     maxAttempts: integer("max_attempts").default(5).notNull(), // Configurable security limit

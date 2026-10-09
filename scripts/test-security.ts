@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { db, user, canteens, orders, pickupBatches, menuItems, pickupCodes } from '../src/lib/db';
-import { eq } from 'drizzle-orm';
+import { eq, and } from 'drizzle-orm';
 import {
   createOrder,
   sellerAcceptOrder,
@@ -30,11 +30,13 @@ async function runSecurityTests() {
   const canteen = await db.query.canteens.findFirst({ where: eq(canteens.name, 'IP Canteen') });
   const customer = await db.query.user.findFirst({ where: eq(user.username, 'ctr/siya_sen') });
   const seller = await db.query.user.findFirst({ where: eq(user.username, 'slr/soman_singh') });
-  const chai = await db.query.menuItems.findFirst({ where: eq(menuItems.name, 'Special Masala Chai') });
+  const tea = await db.query.menuItems.findFirst({ where: and(eq(menuItems.canteenId, canteen!.id), eq(menuItems.name, 'Tea')) });
 
-  if (!canteen || !customer || !seller || !chai) {
+  if (!canteen || !customer || !seller || !tea) {
     throw new Error('Required test fixtures not found');
   }
+
+  const simulatedNow = new Date('2026-10-10T11:00:00+05:30');
 
   // Test 1: Quantity validation (decimal, negative, overflow)
   console.log('\n--- Security Test 1: Input Validation & Quantity Limits ---');
@@ -43,8 +45,9 @@ async function runSecurityTests() {
     await createOrder({
       customerId: customer.id,
       canteenId: canteen.id,
-      items: [{ menuItemId: chai.id, quantity: 0 }],
-      exactPickupTime: '2026-10-08T06:00:00.000Z', // 11:30 AM IST
+      items: [{ menuItemId: tea.id, quantity: 0 }],
+      exactPickupTime: '2026-10-10T11:30:00+05:30',
+      simulatedNow,
       idempotencyKey: `sec_q0_${Date.now()}`,
     });
   } catch (err: any) {
@@ -57,8 +60,9 @@ async function runSecurityTests() {
     await createOrder({
       customerId: customer.id,
       canteenId: canteen.id,
-      items: [{ menuItemId: chai.id, quantity: 1.5 }],
-      exactPickupTime: '2026-10-08T06:00:00.000Z', // 11:30 AM IST
+      items: [{ menuItemId: tea.id, quantity: 1.5 }],
+      exactPickupTime: '2026-10-10T11:30:00+05:30',
+      simulatedNow,
       idempotencyKey: `sec_qdec_${Date.now()}`,
     });
   } catch (err: any) {
@@ -71,8 +75,9 @@ async function runSecurityTests() {
     await createOrder({
       customerId: customer.id,
       canteenId: canteen.id,
-      items: [{ menuItemId: chai.id, quantity: 100 }],
-      exactPickupTime: '2026-10-08T06:00:00.000Z', // 11:30 AM IST
+      items: [{ menuItemId: tea.id, quantity: 100 }],
+      exactPickupTime: '2026-10-10T11:30:00+05:30',
+      simulatedNow,
       idempotencyKey: `sec_q100_${Date.now()}`,
     });
   } catch (err: any) {
@@ -84,8 +89,9 @@ async function runSecurityTests() {
   const orderRes = await createOrder({
     customerId: customer.id,
     canteenId: canteen.id,
-    items: [{ menuItemId: chai.id, quantity: 1 }],
-    exactPickupTime: '2026-10-08T06:30:00.000Z', // 12:00 PM IST
+    items: [{ menuItemId: tea.id, quantity: 1 }],
+    exactPickupTime: '2026-10-10T12:00:00+05:30',
+    simulatedNow,
     idempotencyKey: `sec_order_${Date.now()}`,
   });
   const order = orderRes.order;

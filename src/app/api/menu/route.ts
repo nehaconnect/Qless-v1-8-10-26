@@ -59,6 +59,7 @@ export async function POST(req: NextRequest) {
       categoryId,
       categoryName,
       isVegetarian,
+      isAvailable,
       isTodaysMenu,
       imageUrl,
       dailyCapacity,
@@ -70,13 +71,24 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Canteen ID required' }, { status: 400 });
     }
 
-    if (!name || price === undefined || (!categoryId && !categoryName)) {
-      return NextResponse.json({ error: 'Name, price, and category are required' }, { status: 400 });
+    if (!name || (!categoryId && !categoryName)) {
+      return NextResponse.json({ error: 'Name and category are required' }, { status: 400 });
     }
 
-    const priceNum = parseFloat(price);
-    if (isNaN(priceNum) || priceNum < 0) {
-      return NextResponse.json({ error: 'Invalid price' }, { status: 400 });
+    let finalPrice: string | null = null;
+    let finalAvailable = isAvailable ?? true;
+    let finalTodaysMenu = isTodaysMenu ?? true;
+
+    if (price === null || price === '' || price === undefined || body.priceNotFixed) {
+      finalPrice = null;
+      finalAvailable = false;
+      finalTodaysMenu = false;
+    } else {
+      const priceNum = parseFloat(price);
+      if (isNaN(priceNum) || priceNum < 0) {
+        return NextResponse.json({ error: 'Invalid price' }, { status: 400 });
+      }
+      finalPrice = priceNum.toFixed(2);
     }
 
     let finalCategoryId = categoryId;
@@ -105,11 +117,11 @@ export async function POST(req: NextRequest) {
       categoryId: finalCategoryId,
       name: name.trim(),
       description: description?.trim() || null,
-      price: priceNum.toFixed(2),
+      price: finalPrice,
       isVegetarian: isVegetarian ?? true,
       imageUrl: imageUrl?.trim() || null,
-      isAvailable: true,
-      isTodaysMenu: isTodaysMenu ?? true,
+      isAvailable: finalAvailable,
+      isTodaysMenu: finalTodaysMenu,
       dailyCapacity: capacityNum,
       currentStock: capacityNum,
     }).returning();
@@ -170,7 +182,11 @@ export async function PATCH(req: NextRequest) {
       updates.isArchived = isArchived;
       if (isArchived) updates.archivedAt = new Date();
     }
-    if (price !== undefined) {
+    if (price === null || price === '' || body.priceNotFixed) {
+      updates.price = null;
+      updates.isAvailable = false;
+      updates.isTodaysMenu = false;
+    } else if (price !== undefined) {
       const priceNum = parseFloat(price);
       if (!isNaN(priceNum) && priceNum >= 0) {
         updates.price = priceNum.toFixed(2);

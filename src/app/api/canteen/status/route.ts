@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, canteens, auditLogs } from '@/lib/db';
 import { eq } from 'drizzle-orm';
 import { getSessionUser, requireSeller } from '@/lib/auth/server';
+import { getEffectiveCanteenStatus, getISTDateParts } from '@/lib/services/order-service';
 
 export async function GET(req: NextRequest) {
   try {
@@ -30,7 +31,19 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Canteen not found' }, { status: 404 });
     }
 
-    return NextResponse.json({ canteen });
+    const statusInfo = getEffectiveCanteenStatus(canteen, new Date());
+
+    return NextResponse.json({
+      canteen: {
+        ...canteen,
+        operatingStatus: statusInfo.effectiveStatus,
+        effectiveStatus: statusInfo.effectiveStatus,
+        isOperatingHours: statusInfo.isOperatingHours,
+        isManualOverride: statusInfo.isManualOverride,
+        scheduledHours: statusInfo.scheduledHours,
+        currentTimeIST: statusInfo.currentTimeIST,
+      }
+    });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
@@ -40,7 +53,8 @@ export async function POST(req: NextRequest) {
   try {
     const user = await requireSeller();
     const body = await req.json();
-    const { canteenId, operatingStatus, openingTime, closingTime, defaultBatchCapacity } = body;
+    const { canteenId, openingTime, closingTime, defaultBatchCapacity, resetOverride } = body;
+    const operatingStatus = body.operatingStatus || body.manualOverrideStatus;
 
     const targetCanteenId = user.effectiveRole === 'ADMIN' ? (canteenId || user.canteenId) : user.canteenId;
     if (!targetCanteenId) {
@@ -55,10 +69,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Canteen not found' }, { status: 404 });
     }
 
+    const { dateStr } = getISTDateParts(new Date());
+
     const updateData: any = { updatedAt: new Date() };
-    if (operatingStatus && ['OPEN', 'TOO_BUSY', 'CLOSED'].includes(operatingStatus)) {
+    if (resetOverride) {
+      updateData.manualOverrideStatus = null;
+      updateData.manualOverrideDate = null;
+    } else if (operatingStatus && ['OPEN', 'TOO_BUSY', 'CLOSED'].includes(operatingStatus)) {
       updateData.operatingStatus = operatingStatus;
+      updateData.manualOverrideStatus = operatingStatus;
+      updateData.manualOverrideDate = dateStr;
     }
+
     if (openingTime) updateData.openingTime = openingTime;
     if (closingTime) updateData.closingTime = closingTime;
     if (defaultBatchCapacity && defaultBatchCapacity > 0) {
@@ -79,10 +101,24 @@ export async function POST(req: NextRequest) {
       entityType: 'CANTEEN',
       entityId: targetCanteenId,
       beforeState: { operatingStatus: currentCanteen.operatingStatus },
-      afterState: { operatingStatus: updated.operatingStatus },
+      afterState: { operatingStatus: updated.operatingStatus, manualOverrideStatus: updated.manualOverrideStatus },
     });
 
-    return NextResponse.json({ success: true, canteen: updated });
+    const statusInfo = getEffectiveCanteenStatus(updated, new Date());
+
+    return NextResponse.json({
+      success: true,
+      effectiveStatus: statusInfo.effectiveStatus,
+      canteen: {
+        ...updated,
+        operatingStatus: statusInfo.effectiveStatus,
+        effectiveStatus: statusInfo.effectiveStatus,
+        isOperatingHours: statusInfo.isOperatingHours,
+        isManualOverride: statusInfo.isManualOverride,
+        scheduledHours: statusInfo.scheduledHours,
+        currentTimeIST: statusInfo.currentTimeIST,
+      }
+    });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 400 });
   }
