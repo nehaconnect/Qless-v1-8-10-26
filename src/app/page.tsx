@@ -8,6 +8,7 @@ import { SellerPortal } from '@/components/SellerPortal';
 import { AdminPortal } from '@/components/AdminPortal';
 import { authClient } from '@/lib/auth/auth-client';
 import { Loader2 } from 'lucide-react';
+import { QLessLogo } from '@/components/QLessLogo';
 
 export default function Home() {
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -178,10 +179,11 @@ export default function Home() {
 
   if (isAuthLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="w-8 h-8 text-primary-blue animate-spin" />
-          <p className="text-xs font-bold text-slate-500">Loading QLess Campus Canteen...</p>
+      <div className="min-h-screen bg-transparent flex items-center justify-center p-4">
+        <div className="flex flex-col items-center gap-4 p-8 bg-white/80 backdrop-blur-md rounded-3xl border border-[#BFEBDD] shadow-card">
+          <QLessLogo size="lg" />
+          <Loader2 className="w-7 h-7 text-[#00B894] animate-spin mt-2" />
+          <p className="text-xs font-bold text-[#64839A]">Loading QLess Campus Canteen...</p>
         </div>
       </div>
     );
@@ -204,7 +206,7 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-background text-text-primary flex flex-col">
+    <div className="min-h-screen bg-transparent text-text-primary flex flex-col">
       <Navbar
         user={navbarUser}
         onLogout={handleLogout}
@@ -215,7 +217,7 @@ export default function Home() {
         isLive={isLive}
       />
 
-      <main className="flex-1">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">
         {effectiveRole === 'CUSTOMER' && (
           <CustomerPortal user={currentUser} canteenStatus={canteenStatus} onLogout={handleLogout} />
         )}
@@ -232,9 +234,9 @@ export default function Home() {
         )}
       </main>
 
-      <footer className="border-t border-slate-200 py-6 text-center text-xs text-text-secondary bg-surface">
-        <p className="font-semibold">QLess • Campus Canteen Ordering & Batch Queue Management</p>
-        <p className="text-[11px] text-slate-400 mt-0.5">Indraprastha College for Women (IPCW) • IP Canteen • Delhi University</p>
+      <footer className="border-t border-[#BFEBDD]/60 py-5 text-center text-xs text-[#64839A] bg-white/80 backdrop-blur-md mt-auto">
+        <p className="font-extrabold text-[#073653]">QLess • Campus Canteen Ordering & Batch Queue Management</p>
+        <p className="text-[11px] text-[#64839A] mt-0.5">Indraprastha College for Women (IPCW) • IP Canteen • Delhi University</p>
       </footer>
     </div>
   );

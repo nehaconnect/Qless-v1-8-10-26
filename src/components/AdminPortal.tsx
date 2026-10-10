@@ -310,7 +310,7 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onSwitchViewAs, onLogo
       )}
 
       {/* Admin Control Center Header */}
-      <div className="bg-gradient-to-r from-deep-blue to-indigo-accent rounded-3xl p-6 text-white shadow-tactile flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="bg-[#073653] rounded-3xl p-6 text-white shadow-card flex flex-col md:flex-row md:items-center justify-between gap-4 border border-[#BFEBDD]">
         <div>
           <div className="flex items-center gap-2">
             <button
@@ -319,27 +319,27 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onSwitchViewAs, onLogo
             >
               <MenuIcon className="w-5 h-5" />
             </button>
-            <span className="text-xs uppercase font-extrabold tracking-wider bg-white/20 px-3 py-1 rounded-full">
+            <span className="text-xs uppercase font-black tracking-wider bg-[#00B894] text-white px-3 py-1 rounded-full">
               Admin Control Center
             </span>
           </div>
-          <h2 className="text-xl font-black mt-2">Campus Administration & Live Oversight</h2>
-          <p className="text-xs text-blue-100 mt-0.5">Indraprastha College for Women (IPCW) • IP Canteen Operations</p>
+          <h2 className="text-xl font-black mt-2 text-white">Campus Administration & Live Oversight</h2>
+          <p className="text-xs text-[#DFF3E8] mt-0.5 font-semibold">Indraprastha College for Women (IPCW) • IP Canteen Operations</p>
         </div>
 
         {/* View-As Support Mode Switcher */}
         <div className="flex flex-wrap gap-2">
           <button
             onClick={() => onSwitchViewAs('CUSTOMER')}
-            className="px-3.5 py-2 min-h-[44px] rounded-xl bg-white text-deep-blue text-xs font-bold shadow-soft hover:bg-blue-50 flex items-center gap-1.5 focus:outline-none"
+            className="px-3.5 py-2 min-h-[44px] rounded-xl bg-white text-[#073653] text-xs font-bold shadow-sm hover:bg-[#DFF3E8] flex items-center gap-1.5 focus:outline-none transition"
           >
-            <Eye className="w-3.5 h-3.5" /> View as Student
+            <Eye className="w-3.5 h-3.5 text-[#2B7BFF]" /> View as Student
           </button>
           <button
             onClick={() => onSwitchViewAs('SELLER')}
-            className="px-3.5 py-2 min-h-[44px] rounded-xl bg-white text-deep-blue text-xs font-bold shadow-soft hover:bg-blue-50 flex items-center gap-1.5 focus:outline-none"
+            className="px-3.5 py-2 min-h-[44px] rounded-xl bg-white text-[#073653] text-xs font-bold shadow-sm hover:bg-[#DFF3E8] flex items-center gap-1.5 focus:outline-none transition"
           >
-            <Eye className="w-3.5 h-3.5" /> View as Seller
+            <Eye className="w-3.5 h-3.5 text-[#2B7BFF]" /> View as Seller
           </button>
         </div>
       </div>
@@ -358,19 +358,19 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onSwitchViewAs, onLogo
       )}
 
       {actionSuccess && (
-        <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold flex items-center justify-between">
+        <div className="p-4 rounded-2xl bg-[#DFF3E8] border border-[#BFEBDD] text-[#073653] text-xs font-semibold flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <CheckCircle2 className="w-4 h-4 text-[#00B894] shrink-0" />
             <span>{actionSuccess}</span>
           </div>
-          <button onClick={() => setActionSuccess(null)} className="text-emerald-600 hover:text-emerald-800 p-1">
+          <button onClick={() => setActionSuccess(null)} className="text-[#073653] hover:text-[#00B894] p-1">
             <X className="w-4 h-4" />
           </button>
         </div>
       )}
 
       {/* 5-Section Desktop Navigation Tabs */}
-      <div className="hidden md:flex gap-2 border-b border-slate-200 pb-3 overflow-x-auto">
+      <div className="hidden md:flex gap-2 border-b border-[#BFEBDD]/60 pb-3 overflow-x-auto">
         {[
           { id: 'OVERVIEW', label: 'Overview', icon: TrendingUp },
           { id: 'OPERATIONS', label: 'Operations', icon: ShoppingBag },
@@ -384,8 +384,8 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onSwitchViewAs, onLogo
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id as any)}
-              className={`px-4 py-2 min-h-[44px] rounded-xl text-xs font-bold transition flex items-center gap-2 shrink-0 ${
-                isActive ? 'bg-deep-blue text-white shadow-soft' : 'text-slate-600 hover:bg-slate-100'
+              className={`px-4 py-2.5 min-h-[44px] rounded-2xl text-xs font-extrabold transition flex items-center gap-2 shrink-0 ${
+                isActive ? 'bg-[#00B894] text-white shadow-sm' : 'text-[#073653] hover:bg-[#DFF3E8]'
               }`}
             >
               <Icon className="w-4 h-4" />

@@ -400,7 +400,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
   const currentCanteenName = canteensList.find(c => c.id === selectedCanteenId)?.name || 'IP Canteen';
 
   return (
-    <div className="min-h-screen bg-background flex flex-col md:flex-row pb-12">
+    <div className="flex flex-col md:flex-row gap-6 min-h-[calc(100vh-140px)]">
       {/* ========================================================= */}
       {/* MOBILE DRAWER OVERLAY */}
       {/* ========================================================= */}
@@ -529,21 +529,21 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
       {/* ========================================================= */}
       {/* DESKTOP SIDEBAR NAVIGATION */}
       {/* ========================================================= */}
-      <aside className="hidden md:flex w-64 bg-surface border-r border-slate-200 flex-col shrink-0 p-4">
+      <aside className="hidden md:flex w-[240px] bg-[#DFF3E8]/90 backdrop-blur-md rounded-3xl border border-[#BFEBDD] flex-col shrink-0 p-4 shadow-sm h-fit self-start">
         {/* Canteen Identity Badge */}
-        <div className="p-3.5 bg-gradient-to-br from-slate-50 to-blue-50/50 rounded-2xl border border-slate-200/80 mb-6">
+        <div className="p-3.5 bg-white/70 rounded-2xl border border-[#BFEBDD]/80 mb-6">
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-xl bg-deep-blue text-white flex items-center justify-center font-bold shadow-soft shrink-0">
-              <Coffee className="w-5 h-5" />
+            <div className="w-10 h-10 rounded-xl bg-[#073653] text-white flex items-center justify-center font-bold shadow-sm shrink-0">
+              <Coffee className="w-5 h-5 text-[#00B894]" />
             </div>
             <div className="overflow-hidden">
-              <h2 className="text-sm font-extrabold text-text-primary truncate">{currentCanteenName}</h2>
-              <p className="text-[11px] font-bold text-slate-500">Student Portal</p>
+              <h2 className="text-sm font-extrabold text-[#073653] truncate">{currentCanteenName}</h2>
+              <p className="text-[11px] font-bold text-[#64839A]">Student Portal</p>
             </div>
           </div>
-          <div className="mt-2.5 pt-2 border-t border-slate-200/60 flex items-center justify-between text-[11px]">
-            <span className="text-slate-500 font-semibold">Hours:</span>
-            <span className="font-bold text-deep-blue">8:00 AM – 5:00 PM</span>
+          <div className="mt-2.5 pt-2 border-t border-[#BFEBDD]/60 flex items-center justify-between text-[11px]">
+            <span className="text-[#64839A] font-semibold">Hours:</span>
+            <span className="font-bold text-[#00B894]">8:00 AM – 5:00 PM</span>
           </div>
         </div>
 
@@ -551,25 +551,25 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
         <nav className="flex-1 space-y-1.5">
           <button
             onClick={() => setActiveTab('MENU')}
-            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition min-h-[44px] ${
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
               activeTab === 'MENU'
-                ? 'bg-deep-blue text-white shadow-soft'
-                : 'text-text-secondary hover:bg-slate-100 hover:text-text-primary'
+                ? 'bg-[#00B894] text-white shadow-sm'
+                : 'text-[#073653] hover:bg-[#BFEBDD]/50 hover:text-[#073653]'
             }`}
           >
             <div className="flex items-center gap-3">
               <Coffee className="w-4 h-4" />
               <span>Menu</span>
             </div>
-            <span className="text-[10px] opacity-75 font-semibold">{menuItems.length} items</span>
+            <span className="text-[10px] opacity-80 font-semibold">{menuItems.length} items</span>
           </button>
 
           <button
             onClick={() => setActiveTab('CART')}
-            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition min-h-[44px] ${
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
               activeTab === 'CART'
-                ? 'bg-deep-blue text-white shadow-soft'
-                : 'text-text-secondary hover:bg-slate-100 hover:text-text-primary'
+                ? 'bg-[#00B894] text-white shadow-sm'
+                : 'text-[#073653] hover:bg-[#BFEBDD]/50 hover:text-[#073653]'
             }`}
           >
             <div className="flex items-center gap-3">
@@ -578,7 +578,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
             </div>
             {cart.length > 0 && (
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                activeTab === 'CART' ? 'bg-white text-deep-blue' : 'bg-primary-blue text-white'
+                activeTab === 'CART' ? 'bg-white text-[#00B894]' : 'bg-[#00B894] text-white'
               }`}>
                 {cart.reduce((s, i) => s + i.quantity, 0)}
               </span>
@@ -587,10 +587,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
 
           <button
             onClick={() => setActiveTab('ORDERS')}
-            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition min-h-[44px] ${
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
               activeTab === 'ORDERS'
-                ? 'bg-deep-blue text-white shadow-soft'
-                : 'text-text-secondary hover:bg-slate-100 hover:text-text-primary'
+                ? 'bg-[#00B894] text-white shadow-sm'
+                : 'text-[#073653] hover:bg-[#BFEBDD]/50 hover:text-[#073653]'
             }`}
           >
             <div className="flex items-center gap-3">
@@ -599,7 +599,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
             </div>
             {activeOrders.length > 0 && (
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                activeTab === 'ORDERS' ? 'bg-white text-deep-blue' : 'bg-primary-blue text-white'
+                activeTab === 'ORDERS' ? 'bg-white text-[#00B894]' : 'bg-[#00B894] text-white'
               }`}>
                 {activeOrders.length}
               </span>
@@ -608,10 +608,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
 
           <button
             onClick={() => setActiveTab('NOTIFICATIONS')}
-            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition min-h-[44px] ${
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
               activeTab === 'NOTIFICATIONS'
-                ? 'bg-deep-blue text-white shadow-soft'
-                : 'text-text-secondary hover:bg-slate-100 hover:text-text-primary'
+                ? 'bg-[#00B894] text-white shadow-sm'
+                : 'text-[#073653] hover:bg-[#BFEBDD]/50 hover:text-[#073653]'
             }`}
           >
             <div className="flex items-center gap-3">
@@ -620,7 +620,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
             </div>
             {notificationsList.filter(n => !n.isRead).length > 0 && (
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                activeTab === 'NOTIFICATIONS' ? 'bg-white text-danger' : 'bg-danger text-white'
+                activeTab === 'NOTIFICATIONS' ? 'bg-white text-rose-600' : 'bg-rose-500 text-white'
               }`}>
                 {notificationsList.filter(n => !n.isRead).length}
               </span>
@@ -629,10 +629,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
 
           <button
             onClick={() => setActiveTab('ACCOUNT')}
-            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition min-h-[44px] ${
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
               activeTab === 'ACCOUNT'
-                ? 'bg-deep-blue text-white shadow-soft'
-                : 'text-text-secondary hover:bg-slate-100 hover:text-text-primary'
+                ? 'bg-[#00B894] text-white shadow-sm'
+                : 'text-[#073653] hover:bg-[#BFEBDD]/50 hover:text-[#073653]'
             }`}
           >
             <div className="flex items-center gap-3">
@@ -642,24 +642,11 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
           </button>
         </nav>
 
-        {/* Desktop Quick User Card */}
-        {user && (
-          <div className="pt-4 border-t border-slate-200">
-            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200/60 mb-2">
-              <p className="text-xs font-bold text-text-primary truncate">{user.name}</p>
-              <p className="text-[11px] text-text-secondary truncate">{user.username || user.email}</p>
-            </div>
-            {onLogout && (
-              <button
-                onClick={onLogout}
-                className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-bold text-danger hover:bg-red-50 transition min-h-[40px]"
-              >
-                <LogOut className="w-4 h-4" />
-                <span>Sign Out</span>
-              </button>
-            )}
-          </div>
-        )}
+        {/* Sidebar Footer Slogan */}
+        <div className="mt-8 pt-4 border-t border-[#BFEBDD]/80 text-center">
+          <p className="text-[11px] font-black text-[#073653] tracking-wide">Less Queue</p>
+          <p className="text-[10px] font-bold text-[#64839A] tracking-wider uppercase mt-0.5">More Campus Time</p>
+        </div>
       </aside>
 
       {/* ========================================================= */}
