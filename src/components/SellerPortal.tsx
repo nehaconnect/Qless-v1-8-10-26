@@ -128,9 +128,47 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   const [portalError, setPortalError] = useState<string | null>(null);
   const [portalSuccess, setPortalSuccess] = useState<string | null>(null);
 
-  // Orders Tab Filter & Expanded Batches State
+  // Orders Tab Filter, View Mode & Detail Modal State
   const [ordersFilter, setOrdersFilter] = useState<'REQUESTED' | 'ACTIVE' | 'ALL'>('REQUESTED');
+  const [viewMode, setViewMode] = useState<'LIST' | 'CARD'>('LIST');
+  const [selectedOrderDetail, setSelectedOrderDetail] = useState<Order | null>(null);
+  const [orderHistoryLogs, setOrderHistoryLogs] = useState<any[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [expandedBatches, setExpandedBatches] = useState<Record<string, boolean>>({});
+
+  // Helper fetcher sending View-As headers when admin is inspecting seller workspace
+  const fetchWithViewAs = async (url: string, options: RequestInit = {}) => {
+    const headers = new Headers(options.headers || {});
+    if (user?.isViewAsAdmin && user?.canteenId) {
+      headers.set('x-view-as-role', 'SELLER');
+      headers.set('x-view-as-canteen-id', user.canteenId);
+      headers.set('x-view-as-seller-id', user.id);
+    }
+    if (options.body && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+    return fetch(url, { ...options, headers });
+  };
+
+  // Fetch full ticket details and history when an order detail modal opens
+  const openOrderDetailModal = async (ord: Order) => {
+    setSelectedOrderDetail(ord);
+    setIsLoadingHistory(true);
+    try {
+      const res = await fetchWithViewAs(`/api/orders/${ord.id}`);
+      const data = await res.json();
+      if (data.order) {
+        setSelectedOrderDetail(data.order);
+        if (data.order.history) {
+          setOrderHistoryLogs(data.order.history);
+        }
+      }
+    } catch {
+      // Quiet fallback
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
 
   // Controlled Time Suggestion Modal State
   const [suggestOrderId, setSuggestOrderId] = useState<string | null>(null);
@@ -195,11 +233,11 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       else setIsRefreshing(true);
 
       const [ordRes, batchRes, menuRes, catRes, canRes] = await Promise.all([
-        fetch('/api/orders'),
-        fetch('/api/batches'),
-        fetch('/api/menu'),
-        fetch('/api/menu/categories'),
-        fetch('/api/canteen/status'),
+        fetchWithViewAs('/api/orders'),
+        fetchWithViewAs('/api/batches'),
+        fetchWithViewAs('/api/menu'),
+        fetchWithViewAs('/api/menu/categories'),
+        fetchWithViewAs('/api/canteen/status'),
       ]);
 
       const [ordData, batchData, menuData, catData, canData] = await Promise.all([
@@ -228,7 +266,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
     refreshData(true);
     const interval = setInterval(() => refreshData(false), 15000);
     return () => clearInterval(interval);
-  }, []);
+  }, [user?.id, user?.canteenId]);
 
   const clearMessages = () => {
     setPortalError(null);
@@ -694,15 +732,17 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   // Filtered Lists & Computations
   // -------------------------------------------------------------
   const incomingRequestedOrders = useMemo(() => {
-    return ordersList.filter(o => o.status === 'REQUESTED');
+    return ordersList.filter(o => ['REQUESTED', 'TIME_CHANGE_PROPOSED'].includes(o.status));
   }, [ordersList]);
 
   const activeOrders = useMemo(() => {
-    return ordersList.filter(o => ['ACCEPTED', 'PAYMENT_PENDING', 'CONFIRMED', 'PREPARING'].includes(o.status));
+    return ordersList.filter(o =>
+      ['ACCEPTED', 'AWAITING_PAYMENT', 'PAYMENT_PENDING', 'CONFIRMED', 'PREPARING', 'READY_FOR_PICKUP', 'READY'].includes(o.status)
+    );
   }, [ordersList]);
 
   const readyOrders = useMemo(() => {
-    return ordersList.filter(o => o.status === 'READY');
+    return ordersList.filter(o => ['READY_FOR_PICKUP', 'READY'].includes(o.status));
   }, [ordersList]);
 
   const collectedOrders = useMemo(() => {
@@ -1136,238 +1176,418 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
         ) : (
           <>
             {/* ========================================================= */}
-            {/* 1. ORDERS SECTION (Expandable/Collapsible 15-min Batches) */}
+            {/* 1. ORDERS SECTION (Uncluttered List View & Card View) */}
             {/* ========================================================= */}
             {tab === 'ORDERS' && (
               <div className="space-y-6">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                   <div>
                     <h2 className="text-base font-extrabold text-text-primary">Order Management</h2>
                     <p className="text-xs text-text-secondary">
-                      Grouped by 15-minute preparation batches with exact customer pickup times.
+                      Incoming requests, active production, and complete seller order history.
                     </p>
                   </div>
 
-                  {/* Filter Tabs */}
-                  <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl self-start sm:self-auto">
-                    <button
-                      onClick={() => setOrdersFilter('REQUESTED')}
-                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition min-h-[36px] ${
-                        ordersFilter === 'REQUESTED' ? 'bg-white text-primary-blue shadow-sm' : 'text-slate-600'
-                      }`}
-                    >
-                      Incoming Requests ({incomingRequestedOrders.length})
-                    </button>
-                    <button
-                      onClick={() => setOrdersFilter('ACTIVE')}
-                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition min-h-[36px] ${
-                        ordersFilter === 'ACTIVE' ? 'bg-white text-primary-blue shadow-sm' : 'text-slate-600'
-                      }`}
-                    >
-                      Active ({activeOrders.length})
-                    </button>
-                    <button
-                      onClick={() => setOrdersFilter('ALL')}
-                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition min-h-[36px] ${
-                        ordersFilter === 'ALL' ? 'bg-white text-primary-blue shadow-sm' : 'text-slate-600'
-                      }`}
-                    >
-                      All ({ordersList.length})
-                    </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {/* View Mode Switcher (List vs Card) */}
+                    <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+                      <button
+                        onClick={() => setViewMode('LIST')}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg transition min-h-[36px] flex items-center gap-1.5 ${
+                          viewMode === 'LIST' ? 'bg-white text-primary-blue shadow-sm' : 'text-slate-600'
+                        }`}
+                      >
+                        <Layers className="w-3.5 h-3.5" />
+                        <span>List View</span>
+                      </button>
+                      <button
+                        onClick={() => setViewMode('CARD')}
+                        className={`px-3.5 py-1.5 text-xs font-bold rounded-lg transition min-h-[36px] flex items-center gap-1.5 ${
+                          viewMode === 'CARD' ? 'bg-white text-primary-blue shadow-sm' : 'text-slate-600'
+                        }`}
+                      >
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>Card View</span>
+                      </button>
+                    </div>
+
+                    {/* Filter Tabs */}
+                    <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
+                      <button
+                        onClick={() => setOrdersFilter('REQUESTED')}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg transition min-h-[36px] ${
+                          ordersFilter === 'REQUESTED' ? 'bg-white text-primary-blue shadow-sm' : 'text-slate-600'
+                        }`}
+                      >
+                        Incoming Requests ({incomingRequestedOrders.length})
+                      </button>
+                      <button
+                        onClick={() => setOrdersFilter('ACTIVE')}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg transition min-h-[36px] ${
+                          ordersFilter === 'ACTIVE' ? 'bg-white text-primary-blue shadow-sm' : 'text-slate-600'
+                        }`}
+                      >
+                        Active ({activeOrders.length})
+                      </button>
+                      <button
+                        onClick={() => setOrdersFilter('ALL')}
+                        className={`px-3 py-1.5 text-xs font-bold rounded-lg transition min-h-[36px] ${
+                          ordersFilter === 'ALL' ? 'bg-white text-primary-blue shadow-sm' : 'text-slate-600'
+                        }`}
+                      >
+                        All ({ordersList.length})
+                      </button>
+                    </div>
                   </div>
                 </div>
 
-                {/* Batch-Grouped Orders List */}
-                {batchGroups.length === 0 ? (
-                  <div className="bg-surface rounded-3xl p-12 text-center border border-slate-200 shadow-sm">
-                    <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mx-auto mb-3">
-                      <Inbox className="w-8 h-8" />
-                    </div>
-                    <h3 className="text-sm font-extrabold text-text-primary">
-                      {ordersFilter === 'REQUESTED' ? 'No incoming requests.' : 'No orders yet in this workspace.'}
-                    </h3>
-                    <p className="text-xs text-text-secondary mt-1 max-w-sm mx-auto">
-                      {ordersFilter === 'REQUESTED'
-                        ? 'New customer orders waiting for acceptance will appear here.'
-                        : 'Orders placed by customers for this canteen will be displayed here.'}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-4">
-                    {batchGroups.map(grp => {
-                      const expanded = isBatchExpanded(grp.batchKey);
-                      const aggregateSummary = Object.entries(grp.aggregateItems)
-                        .map(([name, qty]) => `${qty}× ${name}`)
-                        .join(', ');
+                {/* ========================================================= */}
+                {/* LIST VIEW (Default uncluttered table layout) */}
+                {/* ========================================================= */}
+                {viewMode === 'LIST' ? (
+                  <div>
+                    {((ordersFilter === 'REQUESTED' ? incomingRequestedOrders : ordersFilter === 'ACTIVE' ? activeOrders : ordersList).length === 0) ? (
+                      <div className="bg-surface rounded-3xl p-12 text-center border border-slate-200 shadow-sm">
+                        <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mx-auto mb-3">
+                          <Inbox className="w-8 h-8" />
+                        </div>
+                        <h3 className="text-sm font-extrabold text-text-primary">
+                          {ordersFilter === 'REQUESTED' ? 'No incoming requests.' : 'No orders in this category.'}
+                        </h3>
+                        <p className="text-xs text-text-secondary mt-1 max-w-sm mx-auto">
+                          {ordersFilter === 'REQUESTED'
+                            ? 'New customer orders waiting for acceptance will appear here.'
+                            : 'Orders belonging to this seller workspace will be listed here.'}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden">
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs">
+                            <thead>
+                              <tr className="border-b border-slate-200 bg-slate-50/80 text-slate-500 uppercase text-[10px] font-black tracking-wider">
+                                <th className="py-3.5 px-4">Order ID</th>
+                                <th className="py-3.5 px-4">Customer & Phone</th>
+                                <th className="py-3.5 px-4">Requested Pickup</th>
+                                <th className="py-3.5 px-4">Items Summary</th>
+                                <th className="py-3.5 px-4">Total</th>
+                                <th className="py-3.5 px-4">Payment</th>
+                                <th className="py-3.5 px-4">Order Status</th>
+                                <th className="py-3.5 px-4">Created</th>
+                                <th className="py-3.5 px-4 text-right">Actions / Details</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {(ordersFilter === 'REQUESTED' ? incomingRequestedOrders : ordersFilter === 'ACTIVE' ? activeOrders : ordersList).map(ord => {
+                                const isRequested = ord.status === 'REQUESTED';
+                                const exactTime12 = format12Time(ord.exactPickupTime);
+                                const isAccepting = actionLoading[ord.id] === 'ACCEPTING';
+                                const isRejecting = actionLoading[ord.id] === 'REJECTING';
 
-                      return (
-                        <div
-                          key={grp.batchKey}
-                          className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden transition"
-                        >
-                          {/* Accordion / Batch Header */}
-                          <div
-                            onClick={() => toggleBatchAccordion(grp.batchKey)}
-                            className="p-4 sm:p-5 bg-gradient-to-r from-slate-50 to-white flex flex-col md:flex-row md:items-center justify-between gap-3 cursor-pointer hover:bg-slate-50/80 transition select-none border-b border-slate-100"
-                          >
-                            <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-xl bg-deep-blue text-white flex items-center justify-center font-bold shadow-soft shrink-0">
-                                <Clock className="w-5 h-5" />
-                              </div>
-                              <div>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <h3 className="text-sm font-black text-text-primary">{grp.label}</h3>
-                                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-deep-blue">
-                                    {grp.orders.length} order{grp.orders.length !== 1 ? 's' : ''}
-                                  </span>
-                                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-slate-100 text-slate-700">
-                                    Capacity: {grp.reservedCount}/{grp.capacity}
-                                  </span>
-                                  {grp.pendingCount > 0 && (
-                                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-white animate-pulse">
-                                      {grp.pendingCount} Pending Request{grp.pendingCount !== 1 ? 's' : ''}
-                                    </span>
-                                  )}
-                                </div>
-                                {aggregateSummary && (
-                                  <p className="text-[11px] text-slate-500 mt-1 font-medium">
-                                    <span className="font-bold text-slate-700">Kitchen Prep Totals:</span> {aggregateSummary}
-                                  </p>
-                                )}
-                              </div>
-                            </div>
+                                const itemsSummaryText = ord.items.map(i => `${i.quantity}× ${i.itemName}`).join(', ');
 
-                            <div className="flex items-center justify-between md:justify-end gap-3 pt-2 md:pt-0 border-t md:border-t-0 border-slate-100">
-                              <span className="text-[11px] font-bold text-slate-400">
-                                {expanded ? 'Click to collapse' : 'Click to expand'}
-                              </span>
-                              <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
-                                {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Expanded Order Tickets Grid */}
-                          {expanded && (
-                            <div className="p-4 sm:p-5 bg-slate-50/40">
-                              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                                {grp.orders.map(order => {
-                                  const isRequested = order.status === 'REQUESTED';
-                                  const exactTime12 = format12Time(order.exactPickupTime);
-                                  const isAccepting = actionLoading[order.id] === 'ACCEPTING';
-                                  const isRejecting = actionLoading[order.id] === 'REJECTING';
-
-                                  return (
-                                    <div
-                                      key={order.id}
-                                      className="bg-white rounded-2xl border-2 border-slate-200/80 p-4 shadow-sm flex flex-col justify-between hover:border-slate-300 transition"
-                                    >
-                                      <div>
-                                        {/* Card Top Row */}
-                                        <div className="flex items-start justify-between gap-2 pb-3 border-b border-slate-100">
-                                          <div>
-                                            <span className="font-mono text-xs font-black text-deep-blue bg-slate-100 px-2 py-0.5 rounded">
-                                              #{order.orderNumber}
-                                            </span>
-                                            <h4 className="text-xs font-black text-text-primary mt-1.5">{order.customerName}</h4>
-                                            {order.customerPhone && (
-                                              <p className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
-                                                <Phone className="w-3 h-3" /> {order.customerPhone}
-                                              </p>
-                                            )}
-                                          </div>
-                                          <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black uppercase ${
-                                            order.status === 'REQUESTED' ? 'bg-amber-100 text-amber-800' :
-                                            order.status === 'ACCEPTED' ? 'bg-blue-100 text-blue-800' :
-                                            order.status === 'CONFIRMED' ? 'bg-emerald-100 text-emerald-800' :
-                                            order.status === 'PREPARING' ? 'bg-purple-100 text-purple-800' :
-                                            order.status === 'READY' ? 'bg-teal-100 text-teal-800' :
-                                            order.status === 'COLLECTED' ? 'bg-slate-100 text-slate-600' :
-                                            'bg-rose-100 text-rose-800'
-                                          }`}>
-                                            {order.status}
-                                          </span>
+                                return (
+                                  <tr
+                                    key={ord.id}
+                                    onClick={() => openOrderDetailModal(ord)}
+                                    className="hover:bg-blue-50/30 transition cursor-pointer"
+                                  >
+                                    <td className="py-4 px-4 font-mono font-black text-deep-blue whitespace-nowrap">
+                                      #{ord.orderNumber}
+                                    </td>
+                                    <td className="py-4 px-4">
+                                      <div className="font-extrabold text-slate-900">{ord.customerName}</div>
+                                      {ord.customerPhone && ord.customerPhone !== '--' && (
+                                        <div className="text-[10px] text-slate-400 font-mono flex items-center gap-1 mt-0.5">
+                                          <Phone className="w-3 h-3" /> {ord.customerPhone}
                                         </div>
-
-                                        {/* Exact Pickup Time Pill */}
-                                        <div className="my-2.5 p-2 bg-blue-50/70 rounded-xl border border-blue-100/80 flex items-center justify-between text-xs">
-                                          <span className="text-[10px] text-slate-500 font-bold uppercase">Requested Pickup:</span>
-                                          <span className="font-black text-deep-blue flex items-center gap-1">
-                                            <Clock className="w-3.5 h-3.5 text-primary-blue" />
-                                            {exactTime12}
-                                          </span>
-                                        </div>
-
-                                        {order.sellerSuggestedTime && order.timeNegotiationStatus === 'SUGGESTED_BY_SELLER' && (
-                                          <div className="mb-2.5 p-2 bg-amber-50 rounded-xl border border-amber-200/80 flex items-center justify-between text-xs">
-                                            <span className="text-[10px] text-amber-800 font-bold uppercase">Proposed by you:</span>
-                                            <span className="font-black text-amber-900 flex items-center gap-1">
-                                              <Clock className="w-3.5 h-3.5 text-amber-600" />
-                                              {formatPickupTimeDisplay(order.sellerSuggestedTime)}
-                                            </span>
-                                          </div>
-                                        )}
-
-                                        {/* Items list */}
-                                        <div className="space-y-1 py-1 text-xs">
-                                          {order.items.map((it, idx) => (
-                                            <div key={idx} className="flex justify-between text-slate-700">
-                                              <span>{it.quantity}× {it.itemName}</span>
-                                              <span className="font-mono text-slate-500">₹{parseFloat(it.subtotal).toFixed(2)}</span>
-                                            </div>
-                                          ))}
-                                        </div>
+                                      )}
+                                    </td>
+                                    <td className="py-4 px-4 whitespace-nowrap">
+                                      <div className="font-bold text-deep-blue flex items-center gap-1">
+                                        <Clock className="w-3.5 h-3.5 text-primary-blue" />
+                                        {exactTime12}
                                       </div>
-
-                                      {/* Total and Actions */}
-                                      <div className="mt-3 pt-3 border-t border-slate-100">
-                                        <div className="flex justify-between items-center text-xs font-black mb-3">
-                                          <span className="text-slate-400 uppercase text-[10px]">Order Total:</span>
-                                          <span className="text-deep-blue text-sm">₹{parseFloat(order.totalAmount).toFixed(2)}</span>
-                                        </div>
-
+                                      {ord.sellerSuggestedTime && ord.timeNegotiationStatus === 'SUGGESTED_BY_SELLER' && (
+                                        <span className="text-[10px] text-amber-700 font-semibold block mt-0.5">
+                                          Proposed: {formatPickupTimeDisplay(ord.sellerSuggestedTime)}
+                                        </span>
+                                      )}
+                                    </td>
+                                    <td className="py-4 px-4 text-slate-700 max-w-xs truncate" title={itemsSummaryText}>
+                                      {itemsSummaryText}
+                                    </td>
+                                    <td className="py-4 px-4 font-mono font-black text-slate-900 whitespace-nowrap">
+                                      ₹{parseFloat(ord.totalAmount).toFixed(2)}
+                                    </td>
+                                    <td className="py-4 px-4 whitespace-nowrap">
+                                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${
+                                        ord.paymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-800' :
+                                        ord.paymentStatus === 'PENDING' ? 'bg-amber-100 text-amber-800' :
+                                        ord.paymentStatus === 'NOT_DUE' ? 'bg-slate-100 text-slate-600' :
+                                        'bg-rose-100 text-rose-800'
+                                      }`}>
+                                        {ord.paymentStatus}
+                                      </span>
+                                    </td>
+                                    <td className="py-4 px-4 whitespace-nowrap">
+                                      <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${
+                                        ord.status === 'REQUESTED' ? 'bg-amber-100 text-amber-800' :
+                                        ord.status === 'TIME_CHANGE_PROPOSED' ? 'bg-purple-100 text-purple-800' :
+                                        ord.status === 'ACCEPTED' ? 'bg-blue-100 text-blue-800' :
+                                        ord.status === 'CONFIRMED' ? 'bg-emerald-100 text-emerald-800' :
+                                        ord.status === 'PREPARING' ? 'bg-indigo-100 text-indigo-800' :
+                                        ord.status === 'READY_FOR_PICKUP' || ord.status === 'READY' ? 'bg-teal-100 text-teal-800' :
+                                        ord.status === 'COLLECTED' ? 'bg-slate-100 text-slate-600' :
+                                        'bg-rose-100 text-rose-800'
+                                      }`}>
+                                        {ord.status}
+                                      </span>
+                                    </td>
+                                    <td className="py-4 px-4 text-slate-400 font-mono text-[11px] whitespace-nowrap">
+                                      {new Date(ord.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </td>
+                                    <td className="py-4 px-4 text-right whitespace-nowrap" onClick={e => e.stopPropagation()}>
+                                      <div className="flex items-center justify-end gap-1.5">
                                         {isRequested ? (
-                                          <div className="grid grid-cols-3 gap-1.5">
+                                          <>
+                                            <button
+                                              onClick={() => handleAcceptOrder(ord.id)}
+                                              disabled={isAccepting || isRejecting}
+                                              className="px-2.5 py-1.5 rounded-lg text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white transition disabled:opacity-50 flex items-center gap-1 min-h-[32px]"
+                                            >
+                                              {isAccepting ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Accept'}
+                                            </button>
+                                            <button
+                                              onClick={() => openSuggestModal(ord)}
+                                              disabled={isAccepting || isRejecting}
+                                              className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-50 text-amber-800 hover:bg-amber-100 transition min-h-[32px]"
+                                            >
+                                              Time
+                                            </button>
                                             <button
                                               onClick={() => {
-                                                setRejectOrderId(order.id);
+                                                setRejectOrderId(ord.id);
                                                 setRejectReason('Kitchen busy at requested time');
                                               }}
                                               disabled={isAccepting || isRejecting}
-                                              className="py-2 px-1 rounded-xl text-[11px] font-bold bg-rose-50 text-rose-700 hover:bg-rose-100 transition min-h-[44px] disabled:opacity-50 flex items-center justify-center text-center"
+                                              className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-rose-50 text-rose-700 hover:bg-rose-100 transition min-h-[32px]"
                                             >
                                               Reject
                                             </button>
-                                            <button
-                                              onClick={() => openSuggestModal(order)}
-                                              disabled={isAccepting || isRejecting}
-                                              className="py-2 px-1 rounded-xl text-[11px] font-bold bg-amber-50 text-amber-800 hover:bg-amber-100 transition min-h-[44px] disabled:opacity-50 flex items-center justify-center text-center leading-tight"
-                                            >
-                                              {order.sellerSuggestedTime ? 'Change Time' : 'Suggest Time'}
-                                            </button>
-                                            <button
-                                              onClick={() => handleAcceptOrder(order.id)}
-                                              disabled={isAccepting || isRejecting}
-                                              className="py-2 px-1 rounded-xl text-[11px] font-black bg-emerald-600 hover:bg-emerald-700 text-white shadow-soft transition min-h-[44px] disabled:opacity-50 flex items-center justify-center gap-1"
-                                            >
-                                              {isAccepting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Accept'}
-                                            </button>
-                                          </div>
+                                          </>
                                         ) : (
-                                          <div className="text-[11px] font-bold text-slate-500 text-center py-1">
-                                            Payment: <span className="text-slate-800 uppercase">{order.paymentStatus}</span>
-                                          </div>
+                                          <button
+                                            onClick={() => openOrderDetailModal(ord)}
+                                            className="px-3 py-1.5 rounded-lg text-xs font-extrabold bg-slate-100 text-slate-700 hover:bg-slate-200 transition min-h-[32px]"
+                                          >
+                                            View Ticket
+                                          </button>
                                         )}
                                       </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          )}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
                         </div>
-                      );
-                    })}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* ========================================================= */
+                  /* CARD VIEW (15-min batch grouped card grid) */
+                  /* ========================================================= */
+                  <div>
+                    {batchGroups.length === 0 ? (
+                      <div className="bg-surface rounded-3xl p-12 text-center border border-slate-200 shadow-sm">
+                        <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mx-auto mb-3">
+                          <Inbox className="w-8 h-8" />
+                        </div>
+                        <h3 className="text-sm font-extrabold text-text-primary">
+                          {ordersFilter === 'REQUESTED' ? 'No incoming requests.' : 'No orders yet in this workspace.'}
+                        </h3>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {batchGroups.map(grp => {
+                          const expanded = isBatchExpanded(grp.batchKey);
+                          const aggregateSummary = Object.entries(grp.aggregateItems)
+                            .map(([name, qty]) => `${qty}× ${name}`)
+                            .join(', ');
+
+                          return (
+                            <div
+                              key={grp.batchKey}
+                              className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden transition"
+                            >
+                              {/* Accordion / Batch Header */}
+                              <div
+                                onClick={() => toggleBatchAccordion(grp.batchKey)}
+                                className="p-4 sm:p-5 bg-gradient-to-r from-slate-50 to-white flex flex-col md:flex-row md:items-center justify-between gap-3 cursor-pointer hover:bg-slate-50/80 transition select-none border-b border-slate-100"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-xl bg-deep-blue text-white flex items-center justify-center font-bold shadow-soft shrink-0">
+                                    <Clock className="w-5 h-5" />
+                                  </div>
+                                  <div>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <h3 className="text-sm font-black text-text-primary">{grp.label}</h3>
+                                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-blue-100 text-deep-blue">
+                                        {grp.orders.length} order{grp.orders.length !== 1 ? 's' : ''}
+                                      </span>
+                                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-slate-100 text-slate-700">
+                                        Capacity: {grp.reservedCount}/{grp.capacity}
+                                      </span>
+                                      {grp.pendingCount > 0 && (
+                                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-white animate-pulse">
+                                          {grp.pendingCount} Pending Request{grp.pendingCount !== 1 ? 's' : ''}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {aggregateSummary && (
+                                      <p className="text-[11px] text-slate-500 mt-1 font-medium">
+                                        <span className="font-bold text-slate-700">Kitchen Prep Totals:</span> {aggregateSummary}
+                                      </p>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center justify-between md:justify-end gap-3 pt-2 md:pt-0 border-t md:border-t-0 border-slate-100">
+                                  <span className="text-[11px] font-bold text-slate-400">
+                                    {expanded ? 'Click to collapse' : 'Click to expand'}
+                                  </span>
+                                  <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
+                                    {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Expanded Order Tickets Grid */}
+                              {expanded && (
+                                <div className="p-4 sm:p-5 bg-slate-50/40">
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {grp.orders.map(order => {
+                                      const isRequested = order.status === 'REQUESTED';
+                                      const exactTime12 = format12Time(order.exactPickupTime);
+                                      const isAccepting = actionLoading[order.id] === 'ACCEPTING';
+                                      const isRejecting = actionLoading[order.id] === 'REJECTING';
+
+                                      return (
+                                        <div
+                                          key={order.id}
+                                          onClick={() => openOrderDetailModal(order)}
+                                          className="bg-white rounded-2xl border-2 border-slate-200/80 p-4 shadow-sm flex flex-col justify-between hover:border-slate-300 transition cursor-pointer"
+                                        >
+                                          <div>
+                                            {/* Card Top Row */}
+                                            <div className="flex items-start justify-between gap-2 pb-3 border-b border-slate-100">
+                                              <div>
+                                                <span className="font-mono text-xs font-black text-deep-blue bg-slate-100 px-2 py-0.5 rounded">
+                                                  #{order.orderNumber}
+                                                </span>
+                                                <h4 className="text-xs font-black text-text-primary mt-1.5">{order.customerName}</h4>
+                                                {order.customerPhone && (
+                                                  <p className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
+                                                    <Phone className="w-3 h-3" /> {order.customerPhone}
+                                                  </p>
+                                                )}
+                                              </div>
+                                              <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black uppercase ${
+                                                order.status === 'REQUESTED' ? 'bg-amber-100 text-amber-800' :
+                                                order.status === 'ACCEPTED' ? 'bg-blue-100 text-blue-800' :
+                                                order.status === 'CONFIRMED' ? 'bg-emerald-100 text-emerald-800' :
+                                                order.status === 'PREPARING' ? 'bg-purple-100 text-purple-800' :
+                                                order.status === 'READY' ? 'bg-teal-100 text-teal-800' :
+                                                order.status === 'COLLECTED' ? 'bg-slate-100 text-slate-600' :
+                                                'bg-rose-100 text-rose-800'
+                                              }`}>
+                                                {order.status}
+                                              </span>
+                                            </div>
+
+                                            {/* Exact Pickup Time Pill */}
+                                            <div className="my-2.5 p-2 bg-blue-50/70 rounded-xl border border-blue-100/80 flex items-center justify-between text-xs">
+                                              <span className="text-[10px] text-slate-500 font-bold uppercase">Requested Pickup:</span>
+                                              <span className="font-black text-deep-blue flex items-center gap-1">
+                                                <Clock className="w-3.5 h-3.5 text-primary-blue" />
+                                                {exactTime12}
+                                              </span>
+                                            </div>
+
+                                            {order.sellerSuggestedTime && order.timeNegotiationStatus === 'SUGGESTED_BY_SELLER' && (
+                                              <div className="mb-2.5 p-2 bg-amber-50 rounded-xl border border-amber-200/80 flex items-center justify-between text-xs">
+                                                <span className="text-[10px] text-amber-800 font-bold uppercase">Proposed by you:</span>
+                                                <span className="font-black text-amber-900 flex items-center gap-1">
+                                                  <Clock className="w-3.5 h-3.5 text-amber-600" />
+                                                  {formatPickupTimeDisplay(order.sellerSuggestedTime)}
+                                                </span>
+                                              </div>
+                                            )}
+
+                                            {/* Items list */}
+                                            <div className="space-y-1 py-1 text-xs">
+                                              {order.items.map((it, idx) => (
+                                                <div key={idx} className="flex justify-between text-slate-700">
+                                                  <span>{it.quantity}× {it.itemName}</span>
+                                                  <span className="font-mono text-slate-500">₹{parseFloat(it.subtotal).toFixed(2)}</span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </div>
+
+                                          {/* Total and Actions */}
+                                          <div className="mt-3 pt-3 border-t border-slate-100" onClick={e => e.stopPropagation()}>
+                                            <div className="flex justify-between items-center text-xs font-black mb-3">
+                                              <span className="text-slate-400 uppercase text-[10px]">Order Total:</span>
+                                              <span className="text-deep-blue text-sm">₹{parseFloat(order.totalAmount).toFixed(2)}</span>
+                                            </div>
+
+                                            {isRequested ? (
+                                              <div className="grid grid-cols-3 gap-1.5">
+                                                <button
+                                                  onClick={() => {
+                                                    setRejectOrderId(order.id);
+                                                    setRejectReason('Kitchen busy at requested time');
+                                                  }}
+                                                  disabled={isAccepting || isRejecting}
+                                                  className="py-2 px-1 rounded-xl text-[11px] font-bold bg-rose-50 text-rose-700 hover:bg-rose-100 transition min-h-[44px] disabled:opacity-50 flex items-center justify-center text-center"
+                                                >
+                                                  Reject
+                                                </button>
+                                                <button
+                                                  onClick={() => openSuggestModal(order)}
+                                                  disabled={isAccepting || isRejecting}
+                                                  className="py-2 px-1 rounded-xl text-[11px] font-bold bg-amber-50 text-amber-800 hover:bg-amber-100 transition min-h-[44px] disabled:opacity-50 flex items-center justify-center text-center leading-tight"
+                                                >
+                                                  {order.sellerSuggestedTime ? 'Change Time' : 'Suggest Time'}
+                                                </button>
+                                                <button
+                                                  onClick={() => handleAcceptOrder(order.id)}
+                                                  disabled={isAccepting || isRejecting}
+                                                  className="py-2 px-1 rounded-xl text-[11px] font-black bg-emerald-600 hover:bg-emerald-700 text-white shadow-soft transition min-h-[44px] disabled:opacity-50 flex items-center justify-center gap-1"
+                                                >
+                                                  {isAccepting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Accept'}
+                                                </button>
+                                              </div>
+                                            ) : (
+                                              <div className="text-[11px] font-bold text-slate-500 text-center py-1">
+                                                Payment: <span className="text-slate-800 uppercase">{order.paymentStatus}</span>
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -2391,6 +2611,167 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* ========================================================= */}
+      {/* MODAL: ORDER TICKET DETAIL & STATUS HISTORY */}
+      {/* ========================================================= */}
+      {selectedOrderDetail && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl p-6 max-w-lg w-full border border-slate-200 shadow-2xl animate-scaleUp my-8 space-y-4">
+            {/* Modal Header */}
+            <div className="flex items-start justify-between pb-3 border-b border-slate-100">
+              <div>
+                <span className="font-mono text-xs font-black text-deep-blue bg-blue-50 px-2.5 py-1 rounded-md border border-blue-100">
+                  #{selectedOrderDetail.orderNumber}
+                </span>
+                <h3 className="text-base font-black text-text-primary mt-2">Order Ticket Details</h3>
+                <p className="text-[11px] text-slate-400 font-mono">
+                  Created: {new Date(selectedOrderDetail.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <button
+                onClick={() => setSelectedOrderDetail(null)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Status & Payment Badges */}
+            <div className="flex flex-wrap items-center gap-2 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+              <div className="flex-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">Order Status</span>
+                <span className={`inline-block mt-0.5 px-2.5 py-0.5 rounded-full text-xs font-black uppercase ${
+                  selectedOrderDetail.status === 'REQUESTED' ? 'bg-amber-100 text-amber-800' :
+                  selectedOrderDetail.status === 'ACCEPTED' ? 'bg-blue-100 text-blue-800' :
+                  selectedOrderDetail.status === 'CONFIRMED' ? 'bg-emerald-100 text-emerald-800' :
+                  selectedOrderDetail.status === 'PREPARING' ? 'bg-indigo-100 text-indigo-800' :
+                  selectedOrderDetail.status === 'READY_FOR_PICKUP' || selectedOrderDetail.status === 'READY' ? 'bg-teal-100 text-teal-800' :
+                  selectedOrderDetail.status === 'COLLECTED' ? 'bg-slate-100 text-slate-600' :
+                  'bg-rose-100 text-rose-800'
+                }`}>
+                  {selectedOrderDetail.status}
+                </span>
+              </div>
+
+              <div className="flex-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">Payment Status</span>
+                <span className={`inline-block mt-0.5 px-2.5 py-0.5 rounded-full text-xs font-black uppercase ${
+                  selectedOrderDetail.paymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-800' :
+                  selectedOrderDetail.paymentStatus === 'PENDING' ? 'bg-amber-100 text-amber-800' :
+                  selectedOrderDetail.paymentStatus === 'NOT_DUE' ? 'bg-slate-100 text-slate-600' :
+                  'bg-rose-100 text-rose-800'
+                }`}>
+                  {selectedOrderDetail.paymentStatus}
+                </span>
+              </div>
+            </div>
+
+            {/* Customer Details & Pickup Time */}
+            <div className="grid grid-cols-2 gap-3 text-xs">
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">Customer Name</span>
+                <span className="font-extrabold text-slate-900 mt-0.5 block">{selectedOrderDetail.customerName}</span>
+                {selectedOrderDetail.customerPhone && (
+                  <span className="text-[11px] text-slate-500 font-mono block mt-0.5">
+                    {selectedOrderDetail.customerPhone}
+                  </span>
+                )}
+              </div>
+
+              <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                <span className="text-[10px] font-bold text-slate-400 uppercase block">Requested Pickup Time</span>
+                <span className="font-black text-deep-blue mt-0.5 flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5 text-primary-blue" />
+                  {format12Time(selectedOrderDetail.exactPickupTime)}
+                </span>
+                {selectedOrderDetail.sellerSuggestedTime && (
+                  <span className="text-[10px] text-amber-700 font-semibold block mt-0.5">
+                    Proposed: {formatPickupTimeDisplay(selectedOrderDetail.sellerSuggestedTime)}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Itemized Order Table */}
+            <div>
+              <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-2">Item Breakdown:</h4>
+              <div className="border border-slate-200 rounded-2xl overflow-hidden text-xs">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="bg-slate-50 border-b border-slate-200 text-slate-400 uppercase text-[10px] font-black">
+                      <th className="py-2 px-3">Item</th>
+                      <th className="py-2 px-3 text-center">Qty</th>
+                      <th className="py-2 px-3 text-right">Unit Price</th>
+                      <th className="py-2 px-3 text-right">Subtotal</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {selectedOrderDetail.items.map((it, idx) => (
+                      <tr key={idx}>
+                        <td className="py-2 px-3 font-bold text-slate-900">{it.itemName}</td>
+                        <td className="py-2 px-3 text-center font-mono font-bold">{it.quantity}</td>
+                        <td className="py-2 px-3 text-right font-mono text-slate-500">
+                          ₹{parseFloat(it.unitPrice).toFixed(2)}
+                        </td>
+                        <td className="py-2 px-3 text-right font-mono font-bold text-slate-900">
+                          ₹{parseFloat(it.subtotal).toFixed(2)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-slate-50 font-black border-t border-slate-200">
+                      <td colSpan={3} className="py-2.5 px-3 text-right text-slate-600">Grand Total:</td>
+                      <td className="py-2.5 px-3 text-right font-mono text-deep-blue text-sm">
+                        ₹{parseFloat(selectedOrderDetail.totalAmount).toFixed(2)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            {/* Order Status History Timeline */}
+            <div>
+              <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-2">Status Audit History:</h4>
+              {isLoadingHistory ? (
+                <div className="p-4 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-primary-blue" />
+                  <span>Loading history logs...</span>
+                </div>
+              ) : orderHistoryLogs.length === 0 ? (
+                <p className="text-xs text-slate-400 italic">No previous transition logs recorded.</p>
+              ) : (
+                <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                  {orderHistoryLogs.map((log, i) => (
+                    <div key={i} className="p-2.5 bg-slate-50 rounded-xl border border-slate-100 text-[11px] flex justify-between items-start">
+                      <div>
+                        <span className="font-bold text-slate-800">
+                          {log.fromStatus ? `${log.fromStatus} → ` : ''}{log.toStatus}
+                        </span>
+                        {log.note && <p className="text-slate-500 mt-0.5 text-[10px]">{log.note}</p>}
+                      </div>
+                      <span className="text-[10px] font-mono text-slate-400">
+                        {new Date(log.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Actions */}
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+              <button
+                onClick={() => setSelectedOrderDetail(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 min-h-[44px]"
+              >
+                Close Ticket
+              </button>
+            </div>
           </div>
         </div>
       )}

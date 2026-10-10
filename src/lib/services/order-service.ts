@@ -364,10 +364,30 @@ export async function createOrder(input: CreateOrderInput) {
     }).returning();
   }
 
-  // 5. Atomic Transaction: Capacity Reservation + Order Creation
-  const orderNumber = `QL-${Date.now().toString(36).toUpperCase()}-${crypto.randomInt(100, 999)}`;
-
+  // 5. Atomic Transaction: Capacity Reservation + Daily Sequence + Order Creation
   const result = await db.transaction(async (tx) => {
+    // Ensure daily_sequences table exists
+    await tx.execute(sql`
+      CREATE TABLE IF NOT EXISTS daily_sequences (
+        sequence_date varchar(20) PRIMARY KEY,
+        current_val integer NOT NULL DEFAULT 0,
+        updated_at timestamp with time zone NOT NULL DEFAULT NOW()
+      );
+    `);
+
+    // Atomic increment of daily sequence per Asia/Kolkata date
+    const yyyymmdd = todayIST.replace(/-/g, '');
+    const seqRes = await tx.execute(sql`
+      INSERT INTO daily_sequences (sequence_date, current_val, updated_at)
+      VALUES (${yyyymmdd}, 1, NOW())
+      ON CONFLICT (sequence_date) DO UPDATE
+      SET current_val = daily_sequences.current_val + 1, updated_at = NOW()
+      RETURNING current_val;
+    `);
+
+    const seqVal = seqRes.rows[0]?.current_val ?? 1;
+    const orderNumber = `QL-${yyyymmdd}-${String(seqVal).padStart(4, '0')}`;
+
     // Atomically increment reserved_count only if strictly below capacity
     const reserveResult = await tx.execute(sql`
       UPDATE pickup_batches 
@@ -390,7 +410,7 @@ export async function createOrder(input: CreateOrderInput) {
       status: 'REQUESTED',
       totalAmount: calculatedTotal.toFixed(2),
       idempotencyKey,
-      paymentStatus: 'UNPAID',
+      paymentStatus: 'NOT_DUE',
     }).returning();
 
     // Insert order items
@@ -581,8 +601,9 @@ export async function sellerSuggestTime(
 
   const [updated] = await db.update(orders)
     .set({
+      status: 'TIME_CHANGE_PROPOSED',
       sellerSuggestedTime: suggestedDate,
-      timeNegotiationStatus: 'SUGGESTED_BY_SELLER',
+      timeNegotiationStatus: 'PROPOSED_BY_SELLER',
       rejectionNote: note || null,
       updatedAt: new Date(),
     })
@@ -592,7 +613,8 @@ export async function sellerSuggestTime(
   // Audit history log
   await db.insert(orderStatusHistory).values({
     orderId,
-    toStatus: order.status,
+    fromStatus: order.status,
+    toStatus: 'TIME_CHANGE_PROPOSED',
     changedByUserId: sellerUserId,
     actorRole: 'SELLER',
     reason: `Seller suggested alternative pickup time: ${validation.displayTime}${note ? ` (${note})` : ''}`,
@@ -602,7 +624,7 @@ export async function sellerSuggestTime(
     userId: order.customerId,
     orderId,
     title: 'New Time Suggested',
-    message: `Seller suggested an alternative pickup time: ${validation.displayTime}. Please review and accept.`,
+    message: `Seller suggested an alternative pickup time: ${validation.displayTime}. Please review and respond.`,
     type: 'TIME_CHANGED',
   });
 
@@ -614,16 +636,26 @@ export async function sellerSuggestTime(
 }
 
 /**
- * Customer accepts or declines seller time suggestion
+ * Customer accepts, counter-proposes, or declines seller time suggestion
  */
-export async function customerRespondTimeSuggestion(orderId: string, customerId: string, accept: boolean) {
+export async function customerRespondTimeSuggestion(
+  orderId: string,
+  customerId: string,
+  action: 'ACCEPT' | 'COUNTER_PROPOSE' | 'DECLINE' | boolean,
+  counterTime?: string
+) {
   const order = await db.query.orders.findFirst({
     where: and(eq(orders.id, orderId), eq(orders.customerId, customerId))
   });
 
-  if (!order || !order.sellerSuggestedTime) throw new Error('No pending time suggestion');
+  if (!order) throw new Error('Order not found');
 
-  if (accept) {
+  const resolvedAction = typeof action === 'boolean'
+    ? (action ? 'ACCEPT' : 'DECLINE')
+    : action;
+
+  if (resolvedAction === 'ACCEPT') {
+    if (!order.sellerSuggestedTime) throw new Error('No pending time suggestion to accept');
     const { startTime, endTime, displayLabel, batchDate } = getBatchWindow(order.sellerSuggestedTime);
 
     // Reassign batch if different
@@ -666,13 +698,14 @@ export async function customerRespondTimeSuggestion(orderId: string, customerId:
         exactPickupTime: order.sellerSuggestedTime!,
         timeNegotiationStatus: 'ACCEPTED_BY_CUSTOMER',
         status: 'ACCEPTED',
-        paymentStatus: 'PENDING',
+        paymentStatus: 'AWAITING_PAYMENT',
         paymentExpiresAt: new Date(Date.now() + 15 * 60 * 1000),
         updatedAt: new Date(),
       }).where(eq(orders.id, orderId));
 
       await tx.insert(orderStatusHistory).values({
         orderId,
+        fromStatus: order.status,
         toStatus: 'ACCEPTED',
         changedByUserId: customerId,
         actorRole: 'CUSTOMER',
@@ -680,7 +713,68 @@ export async function customerRespondTimeSuggestion(orderId: string, customerId:
       }).catch(() => {});
     });
 
-    return { success: true, accepted: true };
+    return { success: true, accepted: true, status: 'ACCEPTED' };
+  } else if (resolvedAction === 'COUNTER_PROPOSE' && counterTime) {
+    const validation = validatePickupTimeCanonical(counterTime);
+    if (!validation.valid || !validation.canonical) {
+      throw new Error(validation.error || 'Counter pickup time must be within canteen operating hours (8:00 AM to 5:00 PM)');
+    }
+
+    const newPickupDate = canonicalTimeToISTDate(validation.canonical);
+    const { startTime, endTime, displayLabel, batchDate } = getBatchWindow(newPickupDate);
+
+    let [newBatch] = await db.select().from(pickupBatches)
+      .where(and(
+        eq(pickupBatches.canteenId, order.canteenId),
+        eq(pickupBatches.batchDate, batchDate),
+        eq(pickupBatches.startTime, startTime)
+      )).limit(1);
+
+    if (!newBatch) {
+      [newBatch] = await db.insert(pickupBatches).values({
+        canteenId: order.canteenId,
+        batchDate,
+        startTime,
+        endTime,
+        displayLabel,
+        capacity: 15,
+        reservedCount: 0,
+        status: 'UPCOMING'
+      }).returning();
+    }
+
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`
+        UPDATE pickup_batches SET reserved_count = GREATEST(0, reserved_count - 1) WHERE id = ${order.batchId}
+      `);
+      const res = await tx.execute(sql`
+        UPDATE pickup_batches SET reserved_count = reserved_count + 1 WHERE id = ${newBatch.id} AND reserved_count < capacity RETURNING id
+      `);
+      if (res.rows.length === 0) {
+        throw new Error('The selected batch has reached capacity.');
+      }
+
+      await tx.update(orders).set({
+        batchId: newBatch.id,
+        exactPickupTime: newPickupDate,
+        sellerSuggestedTime: null,
+        timeNegotiationStatus: 'COUNTER_PROPOSED_BY_CUSTOMER',
+        status: 'REQUESTED',
+        paymentStatus: 'NOT_DUE',
+        updatedAt: new Date(),
+      }).where(eq(orders.id, orderId));
+
+      await tx.insert(orderStatusHistory).values({
+        orderId,
+        fromStatus: order.status,
+        toStatus: 'REQUESTED',
+        changedByUserId: customerId,
+        actorRole: 'CUSTOMER',
+        reason: `Customer counter-proposed a new pickup time: ${validation.displayTime} for seller review`,
+      }).catch(() => {});
+    });
+
+    return { success: true, counterProposed: true, status: 'REQUESTED' };
   } else {
     // Declined: Cancel order and release capacity
     await db.transaction(async (tx) => {
@@ -696,14 +790,15 @@ export async function customerRespondTimeSuggestion(orderId: string, customerId:
 
       await tx.insert(orderStatusHistory).values({
         orderId,
+        fromStatus: order.status,
         toStatus: 'CANCELLED',
         changedByUserId: customerId,
         actorRole: 'CUSTOMER',
-        reason: 'Customer declined seller suggested pickup time',
+        reason: 'Customer declined time suggestion',
       }).catch(() => {});
     });
 
-    return { success: true, accepted: false };
+    return { success: true, accepted: false, status: 'CANCELLED' };
   }
 }
 

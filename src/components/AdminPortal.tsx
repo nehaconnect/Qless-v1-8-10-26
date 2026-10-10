@@ -100,10 +100,11 @@ interface AuditLog {
 
 interface AdminPortalProps {
   onSwitchViewAs: (role: 'CUSTOMER' | 'SELLER' | 'ADMIN') => void;
+  onOpenSellerModal?: () => void;
   onLogout?: () => void;
 }
 
-export const AdminPortal: React.FC<AdminPortalProps> = ({ onSwitchViewAs, onLogout }) => {
+export const AdminPortal: React.FC<AdminPortalProps> = ({ onSwitchViewAs, onOpenSellerModal, onLogout }) => {
   // Navigation: 5 sections
   const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'OPERATIONS' | 'ANALYTICS' | 'MANAGEMENT' | 'ACCOUNT'>('OVERVIEW');
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
@@ -336,7 +337,13 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onSwitchViewAs, onLogo
             <Eye className="w-3.5 h-3.5 text-[#2B7BFF]" /> View as Student
           </button>
           <button
-            onClick={() => onSwitchViewAs('SELLER')}
+            onClick={() => {
+              if (onOpenSellerModal) {
+                onOpenSellerModal();
+              } else {
+                onSwitchViewAs('SELLER');
+              }
+            }}
             className="px-3.5 py-2 min-h-[44px] rounded-xl bg-white text-[#073653] text-xs font-bold shadow-sm hover:bg-[#DFF3E8] flex items-center gap-1.5 focus:outline-none transition"
           >
             <Eye className="w-3.5 h-3.5 text-[#2B7BFF]" /> View as Seller

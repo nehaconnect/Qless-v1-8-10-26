@@ -11,7 +11,7 @@ export async function GET(req: NextRequest) {
     const canteenId = searchParams.get('canteenId');
     let targetCanteenId: string | null = canteenId;
     if (!targetCanteenId) {
-      if (authUser?.role === 'SELLER' && authUser.canteenId) {
+      if ((authUser?.effectiveRole === 'SELLER' || authUser?.role === 'SELLER') && authUser.canteenId) {
         targetCanteenId = authUser.canteenId;
       } else {
         const defaultCanteen = await db.query.canteens.findFirst({ where: eq(canteens.name, 'IP Canteen') });

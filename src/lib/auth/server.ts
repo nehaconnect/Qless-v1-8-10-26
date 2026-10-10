@@ -69,6 +69,27 @@ export async function getSessionUser(customHeaders?: Headers): Promise<Authentic
     const viewAs = headerList.get("x-view-as-role") as 'CUSTOMER' | 'SELLER' | null;
     const effectiveRole = (u.role === 'ADMIN' && viewAs) ? viewAs : (u.role as 'CUSTOMER' | 'SELLER' | 'ADMIN');
 
+    if (u.role === 'ADMIN' && viewAs === 'SELLER') {
+      const targetCanteenId = headerList.get("x-view-as-canteen-id");
+      const targetSellerUserId = headerList.get("x-view-as-seller-id");
+      if (targetCanteenId) {
+        canteenId = targetCanteenId;
+        sellerApprovalStatus = 'APPROVED';
+      } else if (targetSellerUserId) {
+        const sp = await db.query.sellerProfiles.findFirst({
+          where: eq(sellerProfiles.userId, targetSellerUserId)
+        });
+        canteenId = sp?.canteenId;
+        sellerApprovalStatus = sp?.approvalStatus || 'APPROVED';
+      } else {
+        const sp = await db.query.sellerProfiles.findFirst({
+          where: eq(sellerProfiles.approvalStatus, 'APPROVED')
+        });
+        canteenId = sp?.canteenId;
+        sellerApprovalStatus = 'APPROVED';
+      }
+    }
+
     return {
       id: u.id,
       name: u.name,

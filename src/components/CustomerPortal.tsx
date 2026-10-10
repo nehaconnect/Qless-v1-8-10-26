@@ -84,9 +84,10 @@ interface CustomerPortalProps {
   user: any;
   canteenStatus: 'OPEN' | 'TOO_BUSY' | 'CLOSED';
   onLogout?: () => void;
+  isViewAsAdmin?: boolean;
 }
 
-export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenStatus, onLogout }) => {
+export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenStatus, onLogout, isViewAsAdmin }) => {
   // Navigation: Menu, Cart, Orders, Notifications, Account
   const [activeTab, setActiveTab] = useState<'MENU' | 'CART' | 'ORDERS' | 'NOTIFICATIONS' | 'ACCOUNT'>('MENU');
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);

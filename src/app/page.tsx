@@ -6,6 +6,7 @@ import { LoginPage } from '@/components/LoginPage';
 import { CustomerPortal } from '@/components/CustomerPortal';
 import { SellerPortal } from '@/components/SellerPortal';
 import { AdminPortal } from '@/components/AdminPortal';
+import { SearchableSellerModal, SellerSelection } from '@/components/SearchableSellerModal';
 import { authClient } from '@/lib/auth/auth-client';
 import { Loader2 } from 'lucide-react';
 import { QLessLogo } from '@/components/QLessLogo';
@@ -13,6 +14,8 @@ import { QLessLogo } from '@/components/QLessLogo';
 export default function Home() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [viewAsRole, setViewAsRole] = useState<'CUSTOMER' | 'SELLER' | 'ADMIN' | null>(null);
+  const [selectedSellerForViewAs, setSelectedSellerForViewAs] = useState<SellerSelection | null>(null);
+  const [isSellerModalOpen, setIsSellerModalOpen] = useState(false);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
@@ -144,6 +147,7 @@ export default function Home() {
 
       setCurrentUser(null);
       setViewAsRole(null);
+      setSelectedSellerForViewAs(null);
       setLogoutError(null);
 
       // 5. Network verification that session is revoked on the server
@@ -151,7 +155,6 @@ export default function Home() {
         const verifyRes = await fetch('/api/auth/get-session', { cache: 'no-store' });
         const verifyData = await verifyRes.json().catch(() => null);
         if (verifyData?.user) {
-          // If server still claims active session, force direct database deletion
           await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
         }
       } catch {}
@@ -165,16 +168,40 @@ export default function Home() {
 
   const handleUpdateCanteenStatus = async (newStatus: 'OPEN' | 'TOO_BUSY' | 'CLOSED') => {
     try {
+      const isViewAsSeller = currentUser?.role === 'ADMIN' && viewAsRole === 'SELLER' && selectedSellerForViewAs;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (isViewAsSeller) {
+        headers['x-view-as-role'] = 'SELLER';
+        headers['x-view-as-canteen-id'] = selectedSellerForViewAs.canteenId;
+        headers['x-view-as-seller-id'] = selectedSellerForViewAs.userId;
+      }
       const res = await fetch('/api/canteen/status', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ operatingStatus: newStatus }),
+        headers,
+        body: JSON.stringify({
+          operatingStatus: newStatus,
+          canteenId: isViewAsSeller ? selectedSellerForViewAs.canteenId : undefined
+        }),
       });
       const data = await res.json();
       if (data.canteen?.operatingStatus) {
         setCanteenStatus(data.canteen.operatingStatus);
       }
     } catch {}
+  };
+
+  const handleSwitchViewAs = (role: 'CUSTOMER' | 'SELLER' | 'ADMIN') => {
+    if (role === 'ADMIN') {
+      setViewAsRole(null);
+    } else if (role === 'SELLER') {
+      if (!selectedSellerForViewAs) {
+        setIsSellerModalOpen(true);
+      } else {
+        setViewAsRole('SELLER');
+      }
+    } else {
+      setViewAsRole(role);
+    }
   };
 
   if (isAuthLoading) {
@@ -203,7 +230,21 @@ export default function Home() {
     username: currentUser.username || currentUser.email,
     role: currentUser.role,
     effectiveRole,
+    selectedSellerForViewAs,
   };
+
+  const activeSellerUser = (currentUser.role === 'ADMIN' && effectiveRole === 'SELLER' && selectedSellerForViewAs)
+    ? {
+        id: selectedSellerForViewAs.userId,
+        name: selectedSellerForViewAs.name,
+        username: selectedSellerForViewAs.username,
+        role: 'SELLER',
+        effectiveRole: 'SELLER',
+        canteenId: selectedSellerForViewAs.canteenId,
+        canteenName: selectedSellerForViewAs.canteenName,
+        isViewAsAdmin: true,
+      }
+    : currentUser;
 
   return (
     <div className="min-h-screen bg-transparent text-text-primary flex flex-col">
@@ -212,27 +253,47 @@ export default function Home() {
         onLogout={handleLogout}
         isLoggingOut={isLoggingOut}
         logoutError={logoutError}
-        onSwitchViewAs={(role) => setViewAsRole(role === 'ADMIN' ? null : role)}
+        onSwitchViewAs={handleSwitchViewAs}
+        onOpenSellerModal={() => setIsSellerModalOpen(true)}
         canteenStatus={canteenStatus}
         isLive={isLive}
       />
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">
         {effectiveRole === 'CUSTOMER' && (
-          <CustomerPortal user={currentUser} canteenStatus={canteenStatus} onLogout={handleLogout} />
+          <CustomerPortal
+            user={currentUser}
+            canteenStatus={canteenStatus}
+            onLogout={handleLogout}
+            isViewAsAdmin={currentUser.role === 'ADMIN'}
+          />
         )}
         {effectiveRole === 'SELLER' && (
           <SellerPortal
-            user={currentUser}
+            user={activeSellerUser}
             canteenStatus={canteenStatus}
             onUpdateStatus={handleUpdateCanteenStatus}
             onLogout={handleLogout}
           />
         )}
         {effectiveRole === 'ADMIN' && (
-          <AdminPortal onSwitchViewAs={(role) => setViewAsRole(role)} onLogout={handleLogout} />
+          <AdminPortal
+            onSwitchViewAs={handleSwitchViewAs}
+            onOpenSellerModal={() => setIsSellerModalOpen(true)}
+            onLogout={handleLogout}
+          />
         )}
       </main>
+
+      <SearchableSellerModal
+        isOpen={isSellerModalOpen}
+        onClose={() => setIsSellerModalOpen(false)}
+        currentSelectedSellerId={selectedSellerForViewAs?.userId}
+        onSelectSeller={(seller) => {
+          setSelectedSellerForViewAs(seller);
+          setViewAsRole('SELLER');
+        }}
+      />
 
       <footer className="border-t border-[#BFEBDD]/60 py-5 text-center text-xs text-[#64839A] bg-white/80 backdrop-blur-md mt-auto">
         <p className="font-extrabold text-[#073653]">QLess • Campus Canteen Ordering & Batch Queue Management</p>

@@ -21,11 +21,13 @@ interface NavbarProps {
     username: string;
     role: 'CUSTOMER' | 'SELLER' | 'ADMIN';
     effectiveRole: 'CUSTOMER' | 'SELLER' | 'ADMIN';
+    selectedSellerForViewAs?: { userId: string; name: string; canteenName: string } | null;
   } | null;
   onLogout: () => Promise<void> | void;
   isLoggingOut?: boolean;
   logoutError?: string | null;
   onSwitchViewAs?: (role: 'CUSTOMER' | 'SELLER' | 'ADMIN') => void;
+  onOpenSellerModal?: () => void;
   canteenStatus?: 'OPEN' | 'TOO_BUSY' | 'CLOSED';
   isLive?: boolean;
 }
@@ -36,6 +38,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   isLoggingOut = false,
   logoutError = null,
   onSwitchViewAs,
+  onOpenSellerModal,
   canteenStatus = 'OPEN',
   isLive = true,
 }) => {
@@ -104,17 +107,33 @@ export const Navbar: React.FC<NavbarProps> = ({
     <nav className="sticky top-0 z-40 bg-white/85 backdrop-blur-md border-b border-[#BFEBDD]/60 shadow-sm transition-all">
       {/* Admin View-As active support banner */}
       {user?.role === 'ADMIN' && user.effectiveRole !== 'ADMIN' && onSwitchViewAs && (
-        <div className="bg-[#FFE0C7] text-[#073653] px-4 py-1.5 text-xs font-bold flex items-center justify-between shadow-sm border-b border-[#FFE0C7]">
+        <div className="bg-[#FFE0C7] text-[#073653] px-4 py-1.5 text-xs font-bold flex flex-wrap items-center justify-between gap-2 shadow-sm border-b border-[#FFE0C7]">
           <div className="flex items-center gap-2">
             <Eye className="w-3.5 h-3.5 text-[#2B7BFF]" />
-            <span>Support View Mode: Viewing as <strong>{user.effectiveRole}</strong> (Session is Admin)</span>
+            <span>
+              Support View Mode: Viewing as <strong>{user.effectiveRole}</strong>
+              {user.effectiveRole === 'SELLER' && user.selectedSellerForViewAs && (
+                <> — Seller: <strong>{user.selectedSellerForViewAs.name}</strong> ({user.selectedSellerForViewAs.canteenName})</>
+              )}
+              {' '}(Session is Admin)
+            </span>
           </div>
-          <button
-            onClick={() => onSwitchViewAs('ADMIN')}
-            className="px-2.5 py-0.5 bg-[#073653] text-white rounded-lg font-bold hover:bg-[#073653]/90 transition text-[11px]"
-          >
-            Exit View-As (Back to Admin)
-          </button>
+          <div className="flex items-center gap-2">
+            {user.effectiveRole === 'SELLER' && onOpenSellerModal && (
+              <button
+                onClick={onOpenSellerModal}
+                className="px-2.5 py-0.5 bg-[#00B894] text-white rounded-lg font-bold hover:bg-[#00B894]/90 transition text-[11px]"
+              >
+                Switch Seller Workspace
+              </button>
+            )}
+            <button
+              onClick={() => onSwitchViewAs('ADMIN')}
+              className="px-2.5 py-0.5 bg-[#073653] text-white rounded-lg font-bold hover:bg-[#073653]/90 transition text-[11px]"
+            >
+              Exit View-As (Back to Admin)
+            </button>
+          </div>
         </div>
       )}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

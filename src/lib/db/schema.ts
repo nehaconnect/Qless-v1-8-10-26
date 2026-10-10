@@ -282,6 +282,16 @@ export const pickupBatches = pgTable(
 );
 
 // ============================================================================
+// 11.5. DAILY SEQUENCES FOR CHRONOLOGICAL DISPLAY IDS (Table 11.5)
+// ============================================================================
+
+export const dailySequences = pgTable("daily_sequences", {
+  sequenceDate: varchar("sequence_date", { length: 20 }).primaryKey(), // 'YYYYMMDD' (Asia/Kolkata date)
+  currentVal: integer("current_val").default(0).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+});
+
+// ============================================================================
 // 12-14. ORDERS, ORDER ITEMS & STATUS HISTORY (Tables 12 to 14)
 // ============================================================================
 
@@ -289,7 +299,7 @@ export const orders = pgTable(
   "orders",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    orderNumber: varchar("order_number", { length: 50 }).unique().notNull(), // e.g. QL-20261008-001
+    orderNumber: varchar("order_number", { length: 50 }).unique().notNull(), // e.g. QL-20261010-0001
     customerId: text("customer_id")
       .notNull()
       .references(() => user.id),
@@ -325,11 +335,11 @@ export const orders = pgTable(
   (table) => [
     check(
       "chk_orders_status",
-      sql`${table.status} IN ('REQUESTED', 'ACCEPTED', 'PAYMENT_PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'COLLECTED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'NO_SHOW', 'PAYMENT_FAILED')`
+      sql`${table.status} IN ('REQUESTED', 'TIME_CHANGE_PROPOSED', 'ACCEPTED', 'AWAITING_PAYMENT', 'PAYMENT_PENDING', 'CONFIRMED', 'PREPARING', 'READY', 'READY_FOR_PICKUP', 'COLLECTED', 'REJECTED', 'CANCELLED', 'EXPIRED', 'NO_SHOW', 'PAYMENT_FAILED')`
     ),
     check(
       "chk_orders_payment_status",
-      sql`${table.paymentStatus} IN ('UNPAID', 'PENDING', 'PAID', 'REFUNDED', 'FAILED', 'EXPIRED')`
+      sql`${table.paymentStatus} IN ('NOT_DUE', 'UNPAID', 'PENDING', 'PAID', 'FAILED', 'REFUND_PENDING', 'REFUNDED', 'EXPIRED')`
     ),
     check("chk_orders_total", sql`${table.totalAmount} >= 0`),
     index("idx_orders_canteen_status").on(table.canteenId, table.status, table.createdAt),

@@ -124,7 +124,8 @@ export async function PATCH(
         break;
 
       case 'CUSTOMER_RESPOND_TIME':
-        result = await customerRespondTimeSuggestion(orderId, authUser.id, Boolean(accept));
+        const responseAction = body.responseAction || (body.accept ? 'ACCEPT' : 'DECLINE');
+        result = await customerRespondTimeSuggestion(orderId, authUser.id, responseAction, body.counterTime);
         break;
 
       case 'SELLER_READY':
