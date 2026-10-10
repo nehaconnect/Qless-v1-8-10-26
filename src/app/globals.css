@@ -2,13 +2,51 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+:root,
+[data-theme="pastel"] {
+  --qless-primary-mint: #BFEBDD;
+  --qless-soft-mint: #DFF3E8;
+  --qless-cream: #FFF5E9;
+  --qless-peach: #FFE0C7;
+  --qless-primary: #00B894;
+  --qless-text-secondary: #64839A;
+  --qless-text-primary: #073653;
+  --qless-accent-blue: #2B7BFF;
+
+  --background: #FFF5E9;
+  --surface: #FFFFFF;
+  --surface-cream: #FFF5E9;
+  --sidebar-surface: #DFF3E8;
+  --primary-blue: #00B894;
+  --deep-blue: #073653;
+  --text-primary: #073653;
+  --text-secondary: #64839A;
+  --accent-blue: #2B7BFF;
+  --border-color: rgba(100, 131, 154, 0.18);
+  --card-shadow: 0 4px 20px -2px rgba(7, 54, 83, 0.05), 0 2px 6px -1px rgba(7, 54, 83, 0.03);
+}
+
+[data-theme="blue"] {
+  --qless-primary-mint: #EAF2FF;
+  --qless-soft-mint: #EAF2FF;
+  --qless-cream: #F6F8FC;
+  --qless-peach: #EEF0FF;
+  --qless-primary: #3B82F6;
+  --qless-text-secondary: #64748B;
+  --qless-text-primary: #0F172A;
+  --qless-accent-blue: #3B82F6;
+
   --background: #F6F8FC;
   --surface: #FFFFFF;
+  --surface-cream: #FFFFFF;
+  --sidebar-surface: #FFFFFF;
   --primary-blue: #3B82F6;
   --deep-blue: #2563EB;
   --text-primary: #0F172A;
   --text-secondary: #64748B;
+  --accent-blue: #3B82F6;
+  --border-color: rgba(226, 232, 240, 1);
+  --card-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 body {
@@ -18,11 +56,28 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Custom utility classes for theme design tokens */
+.bg-qless-mesh {
+  background: linear-gradient(135deg, #DFF3E8 0%, #BFEBDD 25%, #FFF5E9 60%, #FFE0C7 100%);
+}
+
+.bg-qless-card {
+  background-color: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 224, 199, 0.6);
+}
+
+.bg-qless-sidebar {
+  background-color: rgba(223, 243, 232, 0.85);
+  backdrop-filter: blur(8px);
+  border-right: 1px solid rgba(191, 235, 221, 0.6);
+}
+
 /* Tactile button pressed effect */
 .btn-tactile {
   transition: all 0.15s ease-in-out;
 }
 .btn-tactile:active {
   transform: translateY(1.5px);
-  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.12);
+  box-shadow: 0 1px 4px rgba(7, 54, 83, 0.12);
 }

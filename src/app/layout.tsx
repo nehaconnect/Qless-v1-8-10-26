@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
+import { getActiveTheme } from '@/lib/theme-config';
+import { GlobalPastelBackground } from '@/components/GlobalPastelBackground';
 
 export const metadata: Metadata = {
   title: 'QLess - Campus Canteen Ordering & Batch Queue System',
@@ -11,9 +13,12 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const theme = getActiveTheme();
+
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-background text-text-primary antialiased">
+    <html lang="en" data-theme={theme}>
+      <body className="min-h-screen text-text-primary antialiased relative">
+        <GlobalPastelBackground />
         {children}
       </body>
     </html>

@@ -2,7 +2,6 @@
 
 import React, { useState } from 'react';
 import {
-  Coffee,
   Lock,
   User,
   Phone,
@@ -16,6 +15,7 @@ import {
   Sparkles
 } from 'lucide-react';
 import { authClient } from '@/lib/auth/auth-client';
+import { QLessLogo } from './QLessLogo';
 
 interface LoginPageProps {
   onSuccess: (user: any) => void;
@@ -61,14 +61,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
       let res: any;
 
       if (isMobile) {
-        // Sign in via phone number plugin
         res = await authClient.signIn.phoneNumber({
           phoneNumber: trimmedId,
           password,
         });
       } else {
-        // Sign in via username plugin
-        // If user typed username with prefix (ctr/..., slr/..., adm/...), use as-is
         let usernameToTry = trimmedId.toLowerCase();
         if (!usernameToTry.includes('/')) {
           usernameToTry = `ctr/${usernameToTry}`;
@@ -79,7 +76,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
           password,
         });
 
-        // If prefix was omitted and ctr/ didn't work, try slr/
         if (res?.error && !trimmedId.includes('/')) {
           const sellerRes = await authClient.signIn.username({
             username: `slr/${trimmedId.toLowerCase()}`,
@@ -94,17 +90,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
       if (res?.error) {
         setError(res.error.message || 'Incorrect username/mobile number or password.');
       } else {
-        // Fetch session
         const sessionRes = await authClient.getSession();
         if (sessionRes.data?.user) {
           onSuccess(sessionRes.data.user);
         } else {
-          // Hard reload to pick up cookies
-          window.location.reload();
+          setError('Session creation failed. Please try again.');
         }
       }
     } catch (err: any) {
-      setError(err?.message || 'Incorrect username/mobile number or password.');
+      setError(err?.message || 'Login failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -116,47 +110,44 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
     setSuccessMsg(null);
 
     if (regPassword !== regConfirmPassword) {
-      setError('Passwords do not match');
+      setError('Passwords do not match.');
       return;
     }
+
     if (regPassword.length < 6) {
-      setError('Password must be at least 6 characters');
+      setError('Password must be at least 6 characters long.');
       return;
     }
+
     if (!/^\d{10}$/.test(regMobile.trim())) {
-      setError('Please enter a valid 10-digit mobile number');
+      setError('Please enter a valid 10-digit mobile number.');
       return;
     }
-    if (cleanUsernameRaw.length < 3) {
-      setError('Username must be at least 3 characters');
-      return;
-    }
-    if (cleanUsernameRaw.length > 30) {
-      setError('Username cannot exceed 30 characters');
+
+    if (!cleanUsernameRaw) {
+      setError('Please enter a valid username.');
       return;
     }
 
     setIsLoading(true);
 
     try {
-      const email = regEmail.trim() || `${cleanUsernameRaw}@ipcw.du.ac.in`;
-
-      const res = await (authClient as any).signUp.email({
-        email,
+      const res = await authClient.signUp.email({
+        email: regEmail.trim(),
         password: regPassword,
         name: regFullName.trim(),
         username: fullUsername,
         phoneNumber: regMobile.trim(),
         role: regRole,
-      });
+      } as any);
 
-      if (res.error) {
-        setError(res.error.message || 'Registration failed. Username or mobile may already exist.');
+      if (res?.error) {
+        setError(res.error.message || 'Registration failed.');
       } else {
         setSuccessMsg(
-          regRole === 'CUSTOMER'
-            ? 'Registration successful! You can now sign in.'
-            : 'Seller registration submitted! Pending administrator approval.'
+          regRole === 'SELLER'
+            ? 'Seller account created! Pending Admin approval. You can sign in after approval.'
+            : `Registration successful! You can now sign in using username: ${fullUsername} or mobile number: ${regMobile.trim()}`
         );
         setTab('LOGIN');
         setIdentifier(fullUsername);
@@ -169,34 +160,32 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
+    <div className="min-h-screen bg-transparent flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         {/* Brand Header */}
         <div className="flex justify-center">
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-deep-blue to-primary-blue flex items-center justify-center text-white shadow-tactile">
-            <Coffee className="w-8 h-8" />
-          </div>
+          <QLessLogo size="lg" showSubtitle={false} />
         </div>
-        <h2 className="mt-4 text-center text-3xl font-extrabold text-text-primary tracking-tight">
-          QLess Campus Canteen
+        <h2 className="mt-4 text-center text-3xl font-extrabold text-[#073653] tracking-tight">
+          Campus Canteen Order Portal
         </h2>
-        <p className="mt-1 text-center text-sm text-text-secondary">
+        <p className="mt-1 text-center text-sm font-semibold text-[#64839A]">
           Indraprastha College for Women (IPCW) • IP Canteen
         </p>
 
         {/* Tab Toggle */}
-        <div className="mt-6 p-1 bg-slate-200/70 rounded-xl flex">
+        <div className="mt-6 p-1 bg-[#DFF3E8]/80 rounded-2xl flex border border-[#BFEBDD]">
           <button
             type="button"
             onClick={() => { setTab('LOGIN'); setError(null); }}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition ${tab === 'LOGIN' ? 'bg-white text-deep-blue shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+            className={`flex-1 py-2.5 text-xs font-black rounded-xl transition ${tab === 'LOGIN' ? 'bg-[#00B894] text-white shadow-sm' : 'text-[#073653] hover:text-[#00B894]'}`}
           >
             Sign In
           </button>
           <button
             type="button"
             onClick={() => { setTab('REGISTER'); setError(null); }}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition ${tab === 'REGISTER' ? 'bg-white text-deep-blue shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+            className={`flex-1 py-2.5 text-xs font-black rounded-xl transition ${tab === 'REGISTER' ? 'bg-[#00B894] text-white shadow-sm' : 'text-[#073653] hover:text-[#00B894]'}`}
           >
             Create Account
           </button>
@@ -204,17 +193,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
       </div>
 
       <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-surface py-8 px-6 shadow-tactile rounded-3xl border border-slate-200/80 sm:px-10">
+        <div className="bg-white/90 backdrop-blur-md py-8 px-6 shadow-card rounded-3xl border border-[#FFE0C7]/80 sm:px-10">
           {error && (
-            <div className="mb-4 p-3.5 rounded-xl bg-red-50 border border-red-200 text-danger text-xs font-medium flex items-center gap-2">
-              <ShieldAlert className="w-4 h-4 flex-shrink-0" />
+            <div className="mb-4 p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-2">
+              <ShieldAlert className="w-4 h-4 flex-shrink-0 text-rose-600" />
               <span>{error}</span>
             </div>
           )}
 
           {successMsg && (
-            <div className="mb-4 p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-medium flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-emerald-600" />
+            <div className="mb-4 p-3.5 rounded-2xl bg-[#DFF3E8] border border-[#BFEBDD] text-[#073653] text-xs font-semibold flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-[#00B894]" />
               <span>{successMsg}</span>
             </div>
           )}
@@ -222,11 +211,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
           {tab === 'LOGIN' ? (
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-text-primary mb-1">
+                <label className="block text-xs font-black text-[#073653] mb-1">
                   Username or Mobile Number
                 </label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#64839A]">
                     <User className="w-4 h-4" />
                   </div>
                   <input
@@ -235,17 +224,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
                     value={identifier}
                     onChange={(e) => setIdentifier(e.target.value)}
                     placeholder="e.g. ctr/siya_sen or 9876500001"
-                    className="block w-full pl-10 pr-3.5 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-blue focus:bg-white transition"
+                    className="block w-full pl-10 pr-3.5 py-3 bg-[#FFF5E9]/60 border border-[#FFE0C7] rounded-xl text-sm font-semibold text-[#073653] focus:outline-none focus:ring-2 focus:ring-[#00B894] focus:bg-white transition"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-text-primary mb-1">
+                <label className="block text-xs font-black text-[#073653] mb-1">
                   Password
                 </label>
                 <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-[#64839A]">
                     <Lock className="w-4 h-4" />
                   </div>
                   <input
@@ -254,12 +243,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Enter your password"
-                    className="block w-full pl-10 pr-10 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-blue focus:bg-white transition"
+                    className="block w-full pl-10 pr-10 py-3 bg-[#FFF5E9]/60 border border-[#FFE0C7] rounded-xl text-sm font-semibold text-[#073653] focus:outline-none focus:ring-2 focus:ring-[#00B894] focus:bg-white transition"
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-600"
+                    className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-[#64839A] hover:text-[#073653]"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -267,16 +256,16 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
               </div>
 
               <div className="flex items-center justify-between text-xs pt-1">
-                <label className="flex items-center gap-2 cursor-pointer text-text-secondary">
+                <label className="flex items-center gap-2 cursor-pointer text-[#64839A] font-semibold">
                   <input
                     type="checkbox"
                     checked={rememberMe}
                     onChange={(e) => setRememberMe(e.target.checked)}
-                    className="rounded border-slate-300 text-primary-blue focus:ring-primary-blue"
+                    className="rounded border-[#64839A]/40 text-[#00B894] focus:ring-[#00B894]"
                   />
                   <span>Remember me</span>
                 </label>
-                <a href="#forgot" className="text-primary-blue hover:underline font-semibold">
+                <a href="#forgot" className="text-[#2B7BFF] hover:underline font-bold">
                   Forgot password?
                 </a>
               </div>
@@ -284,11 +273,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="btn-tactile w-full mt-2 py-3.5 min-h-[44px] px-4 rounded-xl text-white font-bold text-sm bg-gradient-to-r from-deep-blue to-primary-blue shadow-soft hover:shadow-tactile hover:opacity-95 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-blue disabled:opacity-50 flex items-center justify-center gap-2"
+                className="btn-tactile w-full mt-2 py-3.5 min-h-[44px] px-4 rounded-xl text-white font-black text-sm bg-[#00B894] shadow-sm hover:bg-[#00a383] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#00B894] disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {isLoading ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
                     <span>Signing in...</span>
                   </>
                 ) : (
@@ -303,21 +292,21 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
             <form onSubmit={handleRegister} className="space-y-3.5">
               {/* Role Picker */}
               <div>
-                <label className="block text-xs font-bold text-text-primary mb-1">
+                <label className="block text-xs font-black text-[#073653] mb-1">
                   Account Type
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setRegRole('CUSTOMER')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 ${regRole === 'CUSTOMER' ? 'bg-soft-blue border-blue-400 text-deep-blue' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
+                    className={`py-2 px-3 rounded-xl border text-xs font-extrabold transition flex items-center justify-center gap-1.5 ${regRole === 'CUSTOMER' ? 'bg-[#DFF3E8] border-[#00B894] text-[#073653]' : 'bg-[#FFF5E9]/50 border-[#FFE0C7] text-[#64839A]'}`}
                   >
                     Student (ctr/)
                   </button>
                   <button
                     type="button"
                     onClick={() => setRegRole('SELLER')}
-                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition flex items-center justify-center gap-1.5 ${regRole === 'SELLER' ? 'bg-soft-blue border-blue-400 text-deep-blue' : 'bg-slate-50 border-slate-200 text-slate-600'}`}
+                    className={`py-2 px-3 rounded-xl border text-xs font-extrabold transition flex items-center justify-center gap-1.5 ${regRole === 'SELLER' ? 'bg-[#DFF3E8] border-[#00B894] text-[#073653]' : 'bg-[#FFF5E9]/50 border-[#FFE0C7] text-[#64839A]'}`}
                   >
                     Seller (slr/)
                   </button>
@@ -325,45 +314,34 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-text-primary mb-1">
-                  Full Name
-                </label>
+                <label className="block text-xs font-black text-[#073653] mb-1">Full Name</label>
                 <input
                   type="text"
                   required
                   value={regFullName}
                   onChange={(e) => setRegFullName(e.target.value)}
                   placeholder="e.g. Siya Sen"
-                  className="block w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-blue focus:bg-white"
+                  className="block w-full px-3.5 py-2.5 bg-[#FFF5E9]/60 border border-[#FFE0C7] rounded-xl text-xs font-semibold text-[#073653] focus:outline-none focus:ring-2 focus:ring-[#00B894]"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-text-primary mb-1">
-                  Mobile Number (10 digits)
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400 text-xs font-medium">
-                    +91
-                  </div>
-                  <input
-                    type="tel"
-                    required
-                    maxLength={10}
-                    value={regMobile}
-                    onChange={(e) => setRegMobile(e.target.value)}
-                    placeholder="9876500001"
-                    className="block w-full pl-12 pr-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-blue focus:bg-white"
-                  />
-                </div>
+                <label className="block text-xs font-black text-[#073653] mb-1">Mobile Number (10 Digits)</label>
+                <input
+                  type="tel"
+                  required
+                  maxLength={10}
+                  value={regMobile}
+                  onChange={(e) => setRegMobile(e.target.value.replace(/\D/g, ''))}
+                  placeholder="9876500001"
+                  className="block w-full px-3.5 py-2.5 bg-[#FFF5E9]/60 border border-[#FFE0C7] rounded-xl text-xs font-semibold text-[#073653] focus:outline-none focus:ring-2 focus:ring-[#00B894]"
+                />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-text-primary mb-1">
-                  Username
-                </label>
-                <div className="relative flex rounded-xl border border-slate-200 overflow-hidden bg-slate-50">
-                  <span className="px-3 py-2.5 bg-slate-200/80 text-text-secondary text-xs font-bold select-none flex items-center">
+                <label className="block text-xs font-black text-[#073653] mb-1">Desired Username</label>
+                <div className="flex rounded-xl overflow-hidden border border-[#FFE0C7]">
+                  <span className="px-3 py-2.5 bg-[#DFF3E8] text-[#073653] text-xs font-black select-none border-r border-[#BFEBDD]">
                     {prefix}
                   </span>
                   <input
@@ -372,78 +350,68 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onSuccess }) => {
                     value={regUsernameRaw}
                     onChange={(e) => setRegUsernameRaw(e.target.value)}
                     placeholder="siya_sen"
-                    className="flex-1 px-3 py-2.5 bg-slate-50 text-sm focus:outline-none focus:bg-white"
+                    className="flex-1 px-3 py-2.5 bg-[#FFF5E9]/60 text-xs font-semibold text-[#073653] focus:outline-none"
                   />
                 </div>
-                <span className="text-[11px] text-text-secondary mt-0.5 block">
-                  Full username will be: <span className="font-semibold text-deep-blue">{fullUsername}</span>
-                </span>
+                {cleanUsernameRaw && (
+                  <p className="text-[10px] text-[#64839A] mt-1 font-mono">
+                    Full Username: <strong className="text-[#00B894]">{fullUsername}</strong>
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-black text-[#073653] mb-1">Email Address</label>
+                <input
+                  type="email"
+                  required
+                  value={regEmail}
+                  onChange={(e) => setRegEmail(e.target.value)}
+                  placeholder="siya@ipcw.du.ac.in"
+                  className="block w-full px-3.5 py-2.5 bg-[#FFF5E9]/60 border border-[#FFE0C7] rounded-xl text-xs font-semibold text-[#073653] focus:outline-none focus:ring-2 focus:ring-[#00B894]"
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[11px] font-bold text-slate-500 mb-0.5">College</label>
-                  <input
-                    type="text"
-                    disabled
-                    value="IPCW (Default)"
-                    className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-600 font-medium"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-slate-500 mb-0.5">Canteen</label>
-                  <input
-                    type="text"
-                    disabled
-                    value="IP Canteen"
-                    className="w-full px-3 py-2 bg-slate-100 border border-slate-200 rounded-xl text-xs text-slate-600 font-medium"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-xs font-bold text-text-primary mb-1">Password</label>
+                  <label className="block text-xs font-black text-[#073653] mb-1">Password</label>
                   <input
                     type="password"
                     required
                     value={regPassword}
                     onChange={(e) => setRegPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-blue"
+                    placeholder="Min 6 chars"
+                    className="block w-full px-3.5 py-2.5 bg-[#FFF5E9]/60 border border-[#FFE0C7] rounded-xl text-xs font-semibold text-[#073653] focus:outline-none focus:ring-2 focus:ring-[#00B894]"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-text-primary mb-1">Confirm</label>
+                  <label className="block text-xs font-black text-[#073653] mb-1">Confirm Password</label>
                   <input
                     type="password"
                     required
                     value={regConfirmPassword}
                     onChange={(e) => setRegConfirmPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary-blue"
+                    placeholder="Re-type password"
+                    className="block w-full px-3.5 py-2.5 bg-[#FFF5E9]/60 border border-[#FFE0C7] rounded-xl text-xs font-semibold text-[#073653] focus:outline-none focus:ring-2 focus:ring-[#00B894]"
                   />
                 </div>
               </div>
 
-              {regRole === 'SELLER' && (
-                <p className="text-[11px] text-amber-700 bg-amber-50 p-2.5 rounded-xl border border-amber-200">
-                  ⚠️ Seller accounts require administrator approval before operations can commence.
-                </p>
-              )}
-
               <button
                 type="submit"
                 disabled={isLoading}
-                className="btn-tactile w-full mt-2 py-3.5 min-h-[44px] px-4 rounded-xl text-white font-bold text-sm bg-gradient-to-r from-deep-blue to-primary-blue shadow-soft hover:shadow-tactile hover:opacity-95 focus:outline-none disabled:opacity-50 flex items-center justify-center gap-2"
+                className="btn-tactile w-full mt-3 py-3 px-4 rounded-xl text-white font-black text-xs bg-[#00B894] hover:bg-[#00a383] shadow-sm disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {isLoading ? (
                   <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Creating Account...</span>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>Creating account...</span>
                   </>
                 ) : (
-                  <span>Register Account</span>
+                  <>
+                    <span>Create Account</span>
+                    <Sparkles className="w-4 h-4" />
+                  </>
                 )}
               </button>
             </form>

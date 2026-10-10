@@ -820,7 +820,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   // Render
   // -------------------------------------------------------------
   return (
-    <div className="min-h-screen bg-background flex flex-col md:flex-row pb-20 md:pb-8">
+    <div className="flex flex-col md:flex-row gap-6 min-h-[calc(100vh-140px)]">
       {/* ========================================================= */}
       {/* MOBILE DRAWER BACKDROP & PANEL */}
       {/* ========================================================= */}
@@ -908,16 +908,16 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       {/* ========================================================= */}
       {/* DESKTOP SIDEBAR NAVIGATION */}
       {/* ========================================================= */}
-      <aside className="hidden md:flex w-64 bg-surface border-r border-slate-200 flex-col shrink-0 p-4">
+      <aside className="hidden md:flex w-[240px] bg-[#DFF3E8]/90 backdrop-blur-md rounded-3xl border border-[#BFEBDD] flex-col shrink-0 p-4 shadow-sm h-fit self-start">
         {/* Canteen Identity */}
-        <div className="p-3 bg-gradient-to-br from-slate-50 to-slate-100 rounded-2xl border border-slate-200/80 mb-6">
+        <div className="p-3.5 bg-white/70 rounded-2xl border border-[#BFEBDD]/80 mb-6">
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-xl bg-primary-blue text-white flex items-center justify-center font-bold shadow-tactile shrink-0">
-              <Store className="w-5 h-5" />
+            <div className="w-10 h-10 rounded-xl bg-[#073653] text-white flex items-center justify-center font-bold shadow-sm shrink-0">
+              <Store className="w-5 h-5 text-[#00B894]" />
             </div>
             <div className="overflow-hidden">
-              <h2 className="text-sm font-extrabold text-text-primary truncate">{canteenDisplayName}</h2>
-              <p className="text-[11px] font-bold text-slate-500">Seller Workspace</p>
+              <h2 className="text-sm font-extrabold text-[#073653] truncate">{canteenDisplayName}</h2>
+              <p className="text-[11px] font-bold text-[#64839A]">Seller Workspace</p>
             </div>
           </div>
         </div>
@@ -926,10 +926,10 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
         <nav className="flex-1 space-y-1.5">
           <button
             onClick={() => setTab('ORDERS')}
-            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition min-h-[44px] ${
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
               tab === 'ORDERS'
-                ? 'bg-primary-blue text-white shadow-tactile'
-                : 'text-text-secondary hover:bg-slate-100 hover:text-text-primary'
+                ? 'bg-[#00B894] text-white shadow-sm'
+                : 'text-[#073653] hover:bg-[#BFEBDD]/50 hover:text-[#073653]'
             }`}
           >
             <div className="flex items-center gap-3">
@@ -938,7 +938,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
             </div>
             {incomingRequestedOrders.length > 0 && (
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                tab === 'ORDERS' ? 'bg-white text-primary-blue' : 'bg-rose-500 text-white'
+                tab === 'ORDERS' ? 'bg-white text-[#00B894]' : 'bg-rose-500 text-white'
               }`}>
                 {incomingRequestedOrders.length}
               </span>
@@ -947,10 +947,10 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
 
           <button
             onClick={() => setTab('PREPARATION')}
-            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition min-h-[44px] ${
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
               tab === 'PREPARATION'
-                ? 'bg-primary-blue text-white shadow-tactile'
-                : 'text-text-secondary hover:bg-slate-100 hover:text-text-primary'
+                ? 'bg-[#00B894] text-white shadow-sm'
+                : 'text-[#073653] hover:bg-[#BFEBDD]/50 hover:text-[#073653]'
             }`}
           >
             <div className="flex items-center gap-3">
@@ -959,7 +959,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
             </div>
             {batchOrdersMap.length > 0 && (
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                tab === 'PREPARATION' ? 'bg-white text-primary-blue' : 'bg-amber-500 text-white'
+                tab === 'PREPARATION' ? 'bg-white text-[#00B894]' : 'bg-amber-500 text-white'
               }`}>
                 {batchOrdersMap.length}
               </span>
@@ -968,10 +968,10 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
 
           <button
             onClick={() => setTab('PICKUP')}
-            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition min-h-[44px] ${
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
               tab === 'PICKUP'
-                ? 'bg-primary-blue text-white shadow-tactile'
-                : 'text-text-secondary hover:bg-slate-100 hover:text-text-primary'
+                ? 'bg-[#00B894] text-white shadow-sm'
+                : 'text-[#073653] hover:bg-[#BFEBDD]/50 hover:text-[#073653]'
             }`}
           >
             <div className="flex items-center gap-3">
@@ -980,7 +980,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
             </div>
             {readyOrders.length > 0 && (
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-                tab === 'PICKUP' ? 'bg-white text-primary-blue' : 'bg-emerald-500 text-white'
+                tab === 'PICKUP' ? 'bg-white text-[#00B894]' : 'bg-[#00B894] text-white'
               }`}>
                 {readyOrders.length}
               </span>
@@ -989,25 +989,25 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
 
           <button
             onClick={() => setTab('MENU')}
-            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition min-h-[44px] ${
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
               tab === 'MENU'
-                ? 'bg-primary-blue text-white shadow-tactile'
-                : 'text-text-secondary hover:bg-slate-100 hover:text-text-primary'
+                ? 'bg-[#00B894] text-white shadow-sm'
+                : 'text-[#073653] hover:bg-[#BFEBDD]/50 hover:text-[#073653]'
             }`}
           >
             <div className="flex items-center gap-3">
               <Utensils className="w-4 h-4" />
               <span>Menu</span>
             </div>
-            <span className="text-[10px] text-slate-400 font-semibold">{menuItems.length} items</span>
+            <span className="text-[10px] text-[#64839A] font-semibold">{menuItems.length} items</span>
           </button>
 
           <button
             onClick={() => setTab('ACCOUNT')}
-            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-xl text-xs font-bold transition min-h-[44px] ${
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
               tab === 'ACCOUNT'
-                ? 'bg-primary-blue text-white shadow-tactile'
-                : 'text-text-secondary hover:bg-slate-100 hover:text-text-primary'
+                ? 'bg-[#00B894] text-white shadow-sm'
+                : 'text-[#073653] hover:bg-[#BFEBDD]/50 hover:text-[#073653]'
             }`}
           >
             <div className="flex items-center gap-3">
@@ -1017,16 +1017,21 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
           </button>
         </nav>
 
-        {/* Quick Refresh Button */}
-        <div className="pt-4 border-t border-slate-200">
+        {/* Quick Refresh Button & Footer Slogan */}
+        <div className="pt-4 border-t border-[#BFEBDD]/80 space-y-3">
           <button
             onClick={() => refreshData(false)}
             disabled={isRefreshing}
-            className="w-full py-2.5 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition disabled:opacity-50 min-h-[44px]"
+            className="w-full py-2.5 px-3 bg-white/80 hover:bg-white text-[#073653] border border-[#BFEBDD] rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition disabled:opacity-50 min-h-[44px]"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-            <span>{isRefreshing ? 'Refreshing...' : 'Refresh Latest Data'}</span>
+            <RefreshCw className={`w-3.5 h-3.5 text-[#00B894] ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span>{isRefreshing ? 'Refreshing...' : 'Refresh Data'}</span>
           </button>
+
+          <div className="text-center pt-2">
+            <p className="text-[11px] font-black text-[#073653] tracking-wide">Less Queue</p>
+            <p className="text-[10px] font-bold text-[#64839A] tracking-wider uppercase mt-0.5">More Campus Time</p>
+          </div>
         </div>
       </aside>
 
