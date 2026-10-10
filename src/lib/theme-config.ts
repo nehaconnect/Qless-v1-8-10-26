@@ -6,6 +6,13 @@ export type QLessTheme = 'pastel' | 'blue';
  * When NEXT_PUBLIC_QLess_THEME=blue, returns 'blue'.
  */
 export function getActiveTheme(): QLessTheme {
+  if (typeof document !== 'undefined') {
+    const attr = document.documentElement?.getAttribute('data-theme');
+    if (attr === 'blue' || attr === 'pastel') {
+      return attr;
+    }
+  }
+
   const envTheme =
     process.env.NEXT_PUBLIC_QLess_THEME ||
     process.env.NEXT_PUBLIC_QLESS_THEME;
