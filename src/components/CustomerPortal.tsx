@@ -109,9 +109,11 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
   const [calculatedBatch, setCalculatedBatch] = useState<string>('11:00 AM–11:15 AM');
   const [timeValidationError, setTimeValidationError] = useState<string | null>(null);
 
-  // Customer orders
+  // Customer orders & counter-time picker modal
   const [ordersList, setOrdersList] = useState<Order[]>([]);
   const [ordersTab, setOrdersTab] = useState<'ACTIVE' | 'HISTORY'>('ACTIVE');
+  const [chooseTimeOrderId, setChooseTimeOrderId] = useState<string | null>(null);
+  const [chooseTimeInput, setChooseTimeInput] = useState<string>('12:00');
 
   // Notifications
   const [notificationsList, setNotificationsList] = useState<any[]>([]);
@@ -335,9 +337,13 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
     }
   };
 
-  // Time suggestion response (Accept / Decline)
-  const handleRespondTime = async (orderId: string, accept: boolean) => {
-    const actKey = `${orderId}_${accept ? 'accept' : 'decline'}`;
+  // Time suggestion response (Accept / Counter Propose / Decline)
+  const handleRespondTime = async (
+    orderId: string,
+    action: 'ACCEPT' | 'COUNTER_PROPOSE' | 'DECLINE',
+    counterTime?: string
+  ) => {
+    const actKey = `${orderId}_${action.toLowerCase()}`;
     if (actionLoading[actKey]) return;
     setErrorMsg(null);
     setActionLoading(prev => ({ ...prev, [actKey]: 'RESPONDING' }));
@@ -348,7 +354,8 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'CUSTOMER_RESPOND_TIME',
-          accept,
+          responseAction: action,
+          counterTime,
         }),
       });
       if (!res.ok) {
@@ -356,7 +363,14 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
         throw new Error(data.error || 'Failed to update time proposal');
       }
       await fetchOrders(false);
-      setSuccessMsg(accept ? 'New pickup time accepted!' : 'Order cancelled.');
+      if (action === 'ACCEPT') {
+        setSuccessMsg('New pickup time accepted! Order ready for payment.');
+      } else if (action === 'COUNTER_PROPOSE') {
+        setSuccessMsg('Counter-proposed time submitted to canteen.');
+      } else {
+        setSuccessMsg('Order proposal declined and order cancelled.');
+      }
+      setChooseTimeOrderId(null);
     } catch (err: any) {
       setErrorMsg(err.message || 'Error updating response');
     } finally {
@@ -1096,26 +1110,36 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
                         </div>
 
                         {/* Time Negotiation Alert */}
-                        {order.timeNegotiationStatus === 'SUGGESTED_BY_SELLER' && order.sellerSuggestedTime && (
+                        {(order.status === 'TIME_CHANGE_PROPOSED' || order.timeNegotiationStatus === 'PROPOSED_BY_SELLER' || order.timeNegotiationStatus === 'SUGGESTED_BY_SELLER') && order.sellerSuggestedTime && (
                           <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 space-y-2">
                             <p className="text-xs font-bold text-amber-900">
-                              Seller suggested an alternative pickup time: {format12TimeIST(order.sellerSuggestedTime)}
+                              Seller suggested an alternative pickup time: <span className="font-extrabold text-amber-950">{format12TimeIST(order.sellerSuggestedTime)}</span>
                             </p>
                             <div className="flex flex-wrap gap-2">
                               <button
-                                onClick={() => handleRespondTime(order.id, true)}
-                                disabled={isRespondingAccept || isRespondingDecline}
+                                onClick={() => handleRespondTime(order.id, 'ACCEPT')}
+                                disabled={!!actionLoading[`${order.id}_accept`]}
                                 className="px-3.5 py-2 min-h-[44px] rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1.5"
                               >
-                                {isRespondingAccept && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                                {actionLoading[`${order.id}_accept`] && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                                 <span>Accept Suggested Time</span>
                               </button>
                               <button
-                                onClick={() => handleRespondTime(order.id, false)}
-                                disabled={isRespondingAccept || isRespondingDecline}
+                                onClick={() => {
+                                  setChooseTimeOrderId(order.id);
+                                  setChooseTimeInput(order.sellerSuggestedTime || '12:00');
+                                }}
+                                disabled={!!actionLoading[`${order.id}_counter_propose`]}
                                 className="px-3.5 py-2 min-h-[44px] rounded-xl bg-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-300 disabled:opacity-50 flex items-center gap-1.5"
                               >
-                                {isRespondingDecline && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                                <span>Choose Another Time</span>
+                              </button>
+                              <button
+                                onClick={() => handleRespondTime(order.id, 'DECLINE')}
+                                disabled={!!actionLoading[`${order.id}_decline`]}
+                                className="px-3.5 py-2 min-h-[44px] rounded-xl bg-red-100 text-red-700 text-xs font-bold hover:bg-red-200 disabled:opacity-50 flex items-center gap-1.5"
+                              >
+                                {actionLoading[`${order.id}_decline`] && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                                 <span>Decline & Cancel</span>
                               </button>
                             </div>
@@ -1123,7 +1147,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
                         )}
 
                         {/* Payment Required Card */}
-                        {order.status === 'ACCEPTED' && order.paymentStatus === 'PENDING' && (
+                        {order.status === 'ACCEPTED' && order.paymentStatus !== 'PAID' && (
                           <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                             <div>
                               <p className="text-xs font-bold text-deep-blue">Payment Required</p>
@@ -1131,10 +1155,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
                             </div>
                             <button
                               onClick={() => handlePayOrder(order.id)}
-                              disabled={isPaying}
+                              disabled={!!actionLoading[order.id]}
                               className="btn-tactile px-4 py-2 min-h-[44px] rounded-xl bg-deep-blue text-white text-xs font-bold hover:opacity-95 disabled:opacity-50 flex items-center gap-1.5"
                             >
-                              {isPaying ? (
+                              {actionLoading[order.id] === 'PAYING' ? (
                                 <>
                                   <Loader2 className="w-3.5 h-3.5 animate-spin" /> Processing...
                                 </>
@@ -1388,6 +1412,45 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
               >
                 {isDeletingAccount && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 <span>{isDeletingAccount ? 'Deleting...' : 'Yes, Delete'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Choose Another Pickup Time Modal */}
+      {chooseTimeOrderId && (
+        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-100">
+              <h3 className="text-sm font-extrabold text-text-primary">Choose Another Pickup Time</h3>
+              <button onClick={() => setChooseTimeOrderId(null)} className="text-slate-400 hover:text-slate-600 p-1 min-h-[44px] min-w-[44px] flex items-center justify-center">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-text-secondary">
+              Select or enter your preferred pickup time for this order:
+            </p>
+            <input
+              type="time"
+              value={chooseTimeInput}
+              onChange={e => setChooseTimeInput(e.target.value)}
+              className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-sm font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary-blue/30"
+            />
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => setChooseTimeOrderId(null)}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 min-h-[44px]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleRespondTime(chooseTimeOrderId, 'COUNTER_PROPOSE', chooseTimeInput)}
+                disabled={!!actionLoading[`${chooseTimeOrderId}_counter_propose`]}
+                className="flex-1 py-2.5 rounded-xl bg-deep-blue text-white text-xs font-extrabold hover:opacity-95 disabled:opacity-50 flex items-center justify-center gap-1.5 min-h-[44px]"
+              >
+                {actionLoading[`${chooseTimeOrderId}_counter_propose`] && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>Submit Time</span>
               </button>
             </div>
           </div>
