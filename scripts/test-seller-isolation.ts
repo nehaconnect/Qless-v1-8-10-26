@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { db, pool, menuItems, menuCategories, canteens } from '../src/lib/db';
+import { db, pool, menuItems, menuCategories, canteens, user, sellerProfiles } from '../src/lib/db';
 import { eq } from 'drizzle-orm';
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
@@ -9,6 +9,14 @@ async function resetZumiCanteen() {
   if (zumiCanteen) {
     await db.delete(menuItems).where(eq(menuItems.canteenId, zumiCanteen.id));
     await db.delete(menuCategories).where(eq(menuCategories.canteenId, zumiCanteen.id));
+
+    const [zumiUser] = await db.select().from(user).where(eq(user.username, 'slr/zumi_nil')).limit(1);
+    if (zumiUser) {
+      await db.update(sellerProfiles).set({
+        canteenId: zumiCanteen.id,
+        approvalStatus: 'APPROVED'
+      }).where(eq(sellerProfiles.userId, zumiUser.id));
+    }
   }
 }
 
