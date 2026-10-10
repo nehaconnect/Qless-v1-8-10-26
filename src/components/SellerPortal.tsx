@@ -38,7 +38,8 @@ import {
   LogOut,
   Layers,
   CheckSquare,
-  Menu as MenuIcon
+  Menu as MenuIcon,
+  Calendar
 } from 'lucide-react';
 
 interface OrderItem {
@@ -224,6 +225,100 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   // Form State for Category
   const [newCatName, setNewCatName] = useState('');
 
+  // Date filter state for Orders -> ALL tab (Asia/Kolkata timezone)
+  const getTodayISTString = () => {
+    const d = new Date();
+    const formatter = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const parts = formatter.formatToParts(d);
+    let y = '', m = '', day = '';
+    for (const p of parts) {
+      if (p.type === 'year') y = p.value;
+      if (p.type === 'month') m = p.value;
+      if (p.type === 'day') day = p.value;
+    }
+    return `${y}-${m}-${day}`;
+  };
+
+  const getRelativeISTDateString = (daysOffset: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + daysOffset);
+    const formatter = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const parts = formatter.formatToParts(d);
+    let y = '', m = '', day = '';
+    for (const p of parts) {
+      if (p.type === 'year') y = p.value;
+      if (p.type === 'month') m = p.value;
+      if (p.type === 'day') day = p.value;
+    }
+    return `${y}-${m}-${day}`;
+  };
+
+  const getFirstDayOfMonthISTString = () => {
+    const d = new Date();
+    const formatter = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+    });
+    const parts = formatter.formatToParts(d);
+    let y = '', m = '';
+    for (const p of parts) {
+      if (p.type === 'year') y = p.value;
+      if (p.type === 'month') m = p.value;
+    }
+    return `${y}-${m}-01`;
+  };
+
+  const [dateFilterPreset, setDateFilterPreset] = useState<'TODAY' | 'YESTERDAY' | 'LAST_7_DAYS' | 'THIS_MONTH' | 'CUSTOM'>('TODAY');
+  const [startDateStr, setStartDateStr] = useState<string>(getTodayISTString());
+  const [endDateStr, setEndDateStr] = useState<string>(getTodayISTString());
+  const [summaryData, setSummaryData] = useState<any>({
+    totalOrders: 0,
+    ordersCollected: 0,
+    paidRevenue: '0.00',
+    pendingPaymentsCount: 0,
+    pendingPaymentAmount: '0.00',
+    cancelledCount: 0,
+    rejectedCount: 0,
+    collectedOrderValue: '0.00',
+  });
+
+  // Cancellation Modal State
+  const [cancelOrderId, setCancelOrderId] = useState<string | null>(null);
+  const [cancelPresetReason, setCancelPresetReason] = useState('Customer did not pay within time limit');
+  const [cancelCustomReason, setCancelCustomReason] = useState('');
+
+  const handleDatePresetChange = (preset: 'TODAY' | 'YESTERDAY' | 'LAST_7_DAYS' | 'THIS_MONTH' | 'CUSTOM') => {
+    setDateFilterPreset(preset);
+    const today = getTodayISTString();
+    if (preset === 'TODAY') {
+      setStartDateStr(today);
+      setEndDateStr(today);
+    } else if (preset === 'YESTERDAY') {
+      const yest = getRelativeISTDateString(-1);
+      setStartDateStr(yest);
+      setEndDateStr(yest);
+    } else if (preset === 'LAST_7_DAYS') {
+      const start7 = getRelativeISTDateString(-6);
+      setStartDateStr(start7);
+      setEndDateStr(today);
+    } else if (preset === 'THIS_MONTH') {
+      const startMonth = getFirstDayOfMonthISTString();
+      setStartDateStr(startMonth);
+      setEndDateStr(today);
+    }
+  };
+
   // -------------------------------------------------------------
   // Data Fetching
   // -------------------------------------------------------------
@@ -232,8 +327,13 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       if (isInitial) setIsLoading(true);
       else setIsRefreshing(true);
 
+      let ordersUrl = '/api/orders';
+      if (ordersFilter === 'ALL' && startDateStr) {
+        ordersUrl += `?startDate=${startDateStr}&endDate=${endDateStr || startDateStr}`;
+      }
+
       const [ordRes, batchRes, menuRes, catRes, canRes] = await Promise.all([
-        fetchWithViewAs('/api/orders'),
+        fetchWithViewAs(ordersUrl),
         fetchWithViewAs('/api/batches'),
         fetchWithViewAs('/api/menu'),
         fetchWithViewAs('/api/menu/categories'),
@@ -249,6 +349,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       ]);
 
       if (ordData.orders) setOrdersList(ordData.orders);
+      if (ordData.summary) setSummaryData(ordData.summary);
       if (batchData.batches) setBatches(batchData.batches);
       if (menuData.items) setMenuItems(menuData.items);
       if (catData.categories) setCategories(catData.categories);
@@ -266,7 +367,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
     refreshData(true);
     const interval = setInterval(() => refreshData(false), 15000);
     return () => clearInterval(interval);
-  }, [user?.id, user?.canteenId]);
+  }, [user?.id, user?.canteenId, ordersFilter, startDateStr, endDateStr]);
 
   const clearMessages = () => {
     setPortalError(null);
@@ -323,6 +424,38 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       if (!res.ok) throw new Error(data.error || 'Failed to reject order.');
       setPortalSuccess('Order request declined.');
       setRejectOrderId(null);
+      await refreshData(false);
+    } catch (err: any) {
+      setPortalError(err.message);
+    } finally {
+      setActionLoading(prev => {
+        const copy = { ...prev };
+        delete copy[orderId];
+        return copy;
+      });
+    }
+  };
+
+  const handleCancelUnpaidOrder = async (orderId: string) => {
+    if (actionLoading[orderId]) return;
+    clearMessages();
+    setActionLoading(prev => ({ ...prev, [orderId]: 'CANCELLING' }));
+
+    const finalReason = cancelPresetReason === 'Other'
+      ? (cancelCustomReason.trim() || 'Unpaid order cancelled by seller')
+      : cancelPresetReason;
+
+    try {
+      const res = await fetchWithViewAs(`/api/orders/${orderId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'SELLER_CANCEL_UNPAID', reason: finalReason }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to cancel unpaid order.');
+      setPortalSuccess('Unpaid order cancelled successfully. Batch capacity released.');
+      setCancelOrderId(null);
+      setCancelCustomReason('');
       await refreshData(false);
     } catch (err: any) {
       setPortalError(err.message);
@@ -1241,6 +1374,116 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                   </div>
                 </div>
 
+                {/* Calendar Filter & Daily Collection Summary (Shown in ALL tab) */}
+                {ordersFilter === 'ALL' && (
+                  <div className="space-y-4">
+                    <div className="p-4 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-10 h-10 rounded-2xl bg-blue-50 flex items-center justify-center text-primary-blue border border-blue-100">
+                          <Calendar className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">Order History Calendar</h4>
+                          <p className="text-[11px] text-slate-500 font-medium">Asia/Kolkata (IST) Timezone Date Filter</p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-3">
+                        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-bold">
+                          <button
+                            onClick={() => handleDatePresetChange('TODAY')}
+                            className={`px-3 py-1.5 rounded-lg transition min-h-[32px] ${dateFilterPreset === 'TODAY' ? 'bg-white text-primary-blue shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                          >
+                            Today
+                          </button>
+                          <button
+                            onClick={() => handleDatePresetChange('YESTERDAY')}
+                            className={`px-3 py-1.5 rounded-lg transition min-h-[32px] ${dateFilterPreset === 'YESTERDAY' ? 'bg-white text-primary-blue shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                          >
+                            Yesterday
+                          </button>
+                          <button
+                            onClick={() => handleDatePresetChange('LAST_7_DAYS')}
+                            className={`px-3 py-1.5 rounded-lg transition min-h-[32px] ${dateFilterPreset === 'LAST_7_DAYS' ? 'bg-white text-primary-blue shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                          >
+                            Last 7 Days
+                          </button>
+                          <button
+                            onClick={() => handleDatePresetChange('THIS_MONTH')}
+                            className={`px-3 py-1.5 rounded-lg transition min-h-[32px] ${dateFilterPreset === 'THIS_MONTH' ? 'bg-white text-primary-blue shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                          >
+                            This Month
+                          </button>
+                          <button
+                            onClick={() => handleDatePresetChange('CUSTOM')}
+                            className={`px-3 py-1.5 rounded-lg transition min-h-[32px] ${dateFilterPreset === 'CUSTOM' ? 'bg-white text-primary-blue shadow-sm' : 'text-slate-600 hover:text-slate-900'}`}
+                          >
+                            Custom
+                          </button>
+                        </div>
+
+                        <div className="flex items-center gap-1.5 text-xs font-semibold">
+                          <input
+                            type="date"
+                            value={startDateStr}
+                            onChange={(e) => {
+                              setDateFilterPreset('CUSTOM');
+                              setStartDateStr(e.target.value);
+                            }}
+                            className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary-blue/30"
+                          />
+                          <span className="text-slate-400 font-mono text-[11px]">to</span>
+                          <input
+                            type="date"
+                            value={endDateStr}
+                            onChange={(e) => {
+                              setDateFilterPreset('CUSTOM');
+                              setEndDateStr(e.target.value);
+                            }}
+                            className="px-3 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-primary-blue/30"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Daily Order & Collection Summary Cards */}
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                      <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-sm">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Total Orders</span>
+                        <span className="text-xl font-black text-slate-900 mt-1 block">{summaryData.totalOrders}</span>
+                      </div>
+
+                      <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-sm">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Orders Collected</span>
+                        <span className="text-xl font-black text-emerald-600 mt-1 block">{summaryData.ordersCollected}</span>
+                      </div>
+
+                      <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-sm">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Paid Revenue</span>
+                        <span className="text-xl font-black text-blue-700 mt-1 block">₹{parseFloat(summaryData.paidRevenue || '0').toFixed(2)}</span>
+                      </div>
+
+                      <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-sm">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Pending Payments</span>
+                        <span className="text-xl font-black text-amber-600 mt-1 block">{summaryData.pendingPaymentsCount}</span>
+                        <span className="text-[10px] text-slate-400 font-semibold block mt-0.5">₹{parseFloat(summaryData.pendingPaymentAmount || '0').toFixed(2)} (Pending)</span>
+                      </div>
+
+                      <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-sm">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Cancelled / Rejected</span>
+                        <span className="text-xs font-black text-red-600 mt-2 block">
+                          Canc: {summaryData.cancelledCount} | Rej: {summaryData.rejectedCount}
+                        </span>
+                      </div>
+
+                      <div className="bg-white p-4 rounded-2xl border border-slate-200/90 shadow-sm">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider block">Collected Order Value</span>
+                        <span className="text-xl font-black text-teal-700 mt-1 block">₹{parseFloat(summaryData.collectedOrderValue || '0').toFixed(2)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* ========================================================= */}
                 {/* LIST VIEW (Default uncluttered table layout) */}
                 {/* ========================================================= */}
@@ -1283,6 +1526,8 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                 const exactTime12 = format12Time(ord.exactPickupTime);
                                 const isAccepting = actionLoading[ord.id] === 'ACCEPTING';
                                 const isRejecting = actionLoading[ord.id] === 'REJECTING';
+                                const isCancelling = actionLoading[ord.id] === 'CANCELLING';
+                                const isUnpaidPending = ord.paymentStatus !== 'PAID' && ['REQUESTED', 'ACCEPTED', 'AWAITING_PAYMENT', 'PAYMENT_PENDING', 'TIME_CHANGE_PROPOSED'].includes(ord.status);
 
                                 const itemsSummaryText = ord.items.map(i => `${i.quantity}× ${i.itemName}`).join(', ');
 
@@ -1332,6 +1577,8 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                     </td>
                                     <td className="py-4 px-4 whitespace-nowrap">
                                       <span className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase ${
+                                        ord.status === 'CANCELLED' ? 'bg-red-100 text-red-800 border border-red-200' :
+                                        ord.status === 'REJECTED' ? 'bg-rose-100 text-rose-800 border border-rose-200' :
                                         ord.status === 'REQUESTED' ? 'bg-amber-100 text-amber-800' :
                                         ord.status === 'TIME_CHANGE_PROPOSED' ? 'bg-purple-100 text-purple-800' :
                                         ord.status === 'ACCEPTED' ? 'bg-blue-100 text-blue-800' :
@@ -1341,7 +1588,9 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                         ord.status === 'COLLECTED' ? 'bg-slate-100 text-slate-600' :
                                         'bg-rose-100 text-rose-800'
                                       }`}>
-                                        {ord.status}
+                                        {ord.status === 'CANCELLED' ? 'CANCELLED BY SELLER' :
+                                         ord.status === 'REJECTED' ? 'REJECTED BY SELLER' :
+                                         ord.status}
                                       </span>
                                     </td>
                                     <td className="py-4 px-4 text-slate-400 font-mono text-[11px] whitespace-nowrap">
@@ -1353,14 +1602,14 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                           <>
                                             <button
                                               onClick={() => handleAcceptOrder(ord.id)}
-                                              disabled={isAccepting || isRejecting}
+                                              disabled={isAccepting || isRejecting || isCancelling}
                                               className="px-2.5 py-1.5 rounded-lg text-xs font-black bg-emerald-600 hover:bg-emerald-700 text-white transition disabled:opacity-50 flex items-center gap-1 min-h-[32px]"
                                             >
                                               {isAccepting ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Accept'}
                                             </button>
                                             <button
                                               onClick={() => openSuggestModal(ord)}
-                                              disabled={isAccepting || isRejecting}
+                                              disabled={isAccepting || isRejecting || isCancelling}
                                               className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-50 text-amber-800 hover:bg-amber-100 transition min-h-[32px]"
                                             >
                                               Time
@@ -1370,12 +1619,24 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                                 setRejectOrderId(ord.id);
                                                 setRejectReason('Kitchen busy at requested time');
                                               }}
-                                              disabled={isAccepting || isRejecting}
+                                              disabled={isAccepting || isRejecting || isCancelling}
                                               className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-rose-50 text-rose-700 hover:bg-rose-100 transition min-h-[32px]"
                                             >
                                               Reject
                                             </button>
                                           </>
+                                        ) : isUnpaidPending ? (
+                                          <button
+                                            onClick={() => {
+                                              setCancelOrderId(ord.id);
+                                              setCancelPresetReason('Customer did not pay within time limit');
+                                              setCancelCustomReason('');
+                                            }}
+                                            disabled={isCancelling}
+                                            className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 transition min-h-[32px] flex items-center gap-1"
+                                          >
+                                            {isCancelling ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Cancel Unpaid'}
+                                          </button>
                                         ) : (
                                           <button
                                             onClick={() => openOrderDetailModal(ord)}
@@ -1392,6 +1653,30 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                             </tbody>
                           </table>
                         </div>
+
+                        {/* Summary Footer for ALL tab */}
+                        {ordersFilter === 'ALL' && summaryData && (
+                          <div className="p-4 bg-slate-900 text-white border-t border-slate-800 flex flex-wrap items-center justify-between gap-4 text-xs">
+                            <div>
+                              <span className="font-extrabold uppercase tracking-wider text-slate-400 text-[10px] block">Filter Period Summary ({startDateStr} to {endDateStr})</span>
+                              <span className="text-sm font-bold text-white">{summaryData.totalOrders} total orders listed</span>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-6">
+                              <div>
+                                <span className="text-slate-400 text-[10px] font-bold block">Verified Payments Collected</span>
+                                <span className="text-sm font-black text-emerald-400">₹{parseFloat(summaryData.paidRevenue || '0').toFixed(2)}</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 text-[10px] font-bold block">Collected Order Value</span>
+                                <span className="text-sm font-black text-teal-300">₹{parseFloat(summaryData.collectedOrderValue || '0').toFixed(2)}</span>
+                              </div>
+                              <div>
+                                <span className="text-slate-400 text-[10px] font-bold block">Unpaid / Pending Amount (Not Revenue)</span>
+                                <span className="text-sm font-black text-amber-400">₹{parseFloat(summaryData.pendingPaymentAmount || '0').toFixed(2)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -2765,11 +3050,93 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
 
             {/* Modal Actions */}
             <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+              {selectedOrderDetail.paymentStatus !== 'PAID' &&
+               ['REQUESTED', 'ACCEPTED', 'AWAITING_PAYMENT', 'PAYMENT_PENDING', 'TIME_CHANGE_PROPOSED'].includes(selectedOrderDetail.status) && (
+                <button
+                  onClick={() => {
+                    setCancelOrderId(selectedOrderDetail.id);
+                    setCancelPresetReason('Customer did not pay within time limit');
+                    setCancelCustomReason('');
+                  }}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 transition min-h-[44px]"
+                >
+                  Cancel Unpaid Order
+                </button>
+              )}
               <button
                 onClick={() => setSelectedOrderDetail(null)}
                 className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 min-h-[44px]"
               >
                 Close Ticket
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL: CANCEL UNPAID ORDER CONFIRMATION */}
+      {/* ========================================================= */}
+      {cancelOrderId && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full border border-slate-200 shadow-2xl animate-scaleUp">
+            <div className="flex items-center gap-2 mb-2 text-red-700">
+              <AlertCircle className="w-5 h-5" />
+              <h3 className="text-sm font-black">Cancel Unpaid Order</h3>
+            </div>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Are you sure you want to cancel this unpaid order? The server will verify payment status and atomically release reserved batch capacity.
+            </p>
+
+            <div className="mt-4 space-y-3">
+              <label className="text-[11px] font-bold text-slate-700 block">Select Cancellation Reason:</label>
+              <div className="space-y-2 text-xs">
+                {[
+                  'Customer did not pay within time limit',
+                  'Kitchen capacity unavailable',
+                  'Customer requested cancellation',
+                  'Other',
+                ].map((r) => (
+                  <label key={r} className="flex items-center gap-2 cursor-pointer text-slate-800">
+                    <input
+                      type="radio"
+                      name="cancelReason"
+                      checked={cancelPresetReason === r}
+                      onChange={() => setCancelPresetReason(r)}
+                      className="accent-red-600"
+                    />
+                    <span className="font-semibold">{r === 'Other' ? 'Other reason (specify below)' : r}</span>
+                  </label>
+                ))}
+              </div>
+
+              {cancelPresetReason === 'Other' && (
+                <textarea
+                  value={cancelCustomReason}
+                  onChange={(e) => setCancelCustomReason(e.target.value)}
+                  placeholder="Enter reason for cancelling this unpaid order..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-red-500 min-h-[70px]"
+                />
+              )}
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-2">
+              <button
+                onClick={() => {
+                  setCancelOrderId(null);
+                  setCancelCustomReason('');
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 min-h-[44px]"
+              >
+                Keep Order
+              </button>
+              <button
+                onClick={() => handleCancelUnpaidOrder(cancelOrderId)}
+                disabled={actionLoading[cancelOrderId] === 'CANCELLING'}
+                className="px-4 py-2 rounded-xl text-xs font-black bg-red-600 hover:bg-red-700 text-white shadow-tactile min-h-[44px] flex items-center gap-1.5"
+              >
+                {actionLoading[cancelOrderId] === 'CANCELLING' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Confirm Cancellation
               </button>
             </div>
           </div>

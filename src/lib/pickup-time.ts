@@ -77,6 +77,20 @@ export function getISTTodayString(now: Date = new Date()): string {
 }
 
 /**
+ * Returns UTC Date boundaries for an Asia/Kolkata date range (YYYY-MM-DD to YYYY-MM-DD)
+ */
+export function getISTDateRangeBounds(
+  startDateStr: string,
+  endDateStr?: string
+): { startUTC: Date; endUTC: Date } {
+  const startStr = startDateStr.trim();
+  const endStr = (endDateStr || startDateStr).trim();
+  const startUTC = new Date(`${startStr}T00:00:00.000+05:30`);
+  const endUTC = new Date(`${endStr}T23:59:59.999+05:30`);
+  return { startUTC, endUTC };
+}
+
+/**
  * Converts Hour (1-12), Minute (0-59), and AM/PM into canonical 'HH:mm'
  */
 export function hourMinuteAmpmToCanonical(

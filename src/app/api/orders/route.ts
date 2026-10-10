@@ -1,48 +1,132 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, orders, orderItems, pickupBatches, canteens, user, pickupCodes } from '@/lib/db';
-import { eq, desc, and, inArray } from 'drizzle-orm';
+import { eq, desc, and, inArray, gte, lte } from 'drizzle-orm';
 import { requireAuth } from '@/lib/auth/server';
 import { createOrder, decryptPickupCode, format12HourIST } from '@/lib/services/order-service';
-import { toCanonicalPickupTime, formatPickupTimeDisplay } from '@/lib/pickup-time';
+import { toCanonicalPickupTime, formatPickupTimeDisplay, getISTDateRangeBounds } from '@/lib/pickup-time';
 
 export async function GET(req: NextRequest) {
   try {
     const authUser = await requireAuth();
     const { searchParams } = new URL(req.url);
-    const dateStr = searchParams.get('date');
+    const dateParam = searchParams.get('date');
+    const startDateParam = searchParams.get('startDate') || dateParam;
+    const endDateParam = searchParams.get('endDate') || startDateParam;
     const batchId = searchParams.get('batchId');
 
     let orderList: any[] = [];
 
     if (authUser.effectiveRole === 'CUSTOMER') {
       // Customer sees only own orders
+      const conditions: any[] = [eq(orders.customerId, authUser.id)];
+      if (startDateParam) {
+        const { startUTC, endUTC } = getISTDateRangeBounds(startDateParam, endDateParam!);
+        conditions.push(gte(orders.createdAt, startUTC));
+        conditions.push(lte(orders.createdAt, endUTC));
+      }
       orderList = await db.query.orders.findMany({
-        where: eq(orders.customerId, authUser.id),
+        where: and(...conditions),
         orderBy: [desc(orders.createdAt)],
       });
     } else if (authUser.effectiveRole === 'SELLER') {
       // Seller sees orders belonging to their canteen
       const canteenId = authUser.canteenId;
       if (!canteenId) {
-        return NextResponse.json({ orders: [] });
+        return NextResponse.json({
+          orders: [],
+          summary: {
+            totalOrders: 0,
+            ordersCollected: 0,
+            paidRevenue: '0.00',
+            pendingPaymentsCount: 0,
+            pendingPaymentAmount: '0.00',
+            cancelledCount: 0,
+            rejectedCount: 0,
+            collectedOrderValue: '0.00',
+          },
+        });
+      }
+
+      const conditions: any[] = [eq(orders.canteenId, canteenId)];
+      if (startDateParam) {
+        const { startUTC, endUTC } = getISTDateRangeBounds(startDateParam, endDateParam!);
+        conditions.push(gte(orders.createdAt, startUTC));
+        conditions.push(lte(orders.createdAt, endUTC));
+      } else if (batchId) {
+        conditions.push(eq(orders.batchId, batchId));
       }
 
       orderList = await db.query.orders.findMany({
-        where: batchId
-          ? and(eq(orders.canteenId, canteenId), eq(orders.batchId, batchId))
-          : eq(orders.canteenId, canteenId),
+        where: and(...conditions),
         orderBy: [desc(orders.createdAt)],
       });
     } else {
       // Admin sees all
+      const conditions: any[] = [];
+      if (startDateParam) {
+        const { startUTC, endUTC } = getISTDateRangeBounds(startDateParam, endDateParam!);
+        conditions.push(gte(orders.createdAt, startUTC));
+        conditions.push(lte(orders.createdAt, endUTC));
+      }
       orderList = await db.query.orders.findMany({
+        where: conditions.length > 0 ? and(...conditions) : undefined,
         orderBy: [desc(orders.createdAt)],
-        limit: 100,
+        limit: 200,
       });
     }
 
+    // Server-side summary calculation
+    let totalOrders = orderList.length;
+    let ordersCollected = 0;
+    let paidRevenue = 0;
+    let pendingPaymentsCount = 0;
+    let pendingPaymentAmount = 0;
+    let cancelledCount = 0;
+    let rejectedCount = 0;
+    let collectedOrderValue = 0;
+
+    for (const ord of orderList) {
+      const amt = parseFloat(ord.totalAmount) || 0;
+
+      if (ord.status === 'COLLECTED') {
+        ordersCollected++;
+        if (ord.paymentStatus === 'PAID') {
+          collectedOrderValue += amt;
+        }
+      }
+
+      if (ord.paymentStatus === 'PAID') {
+        paidRevenue += amt;
+      }
+
+      if (
+        ['UNPAID', 'PENDING', 'AWAITING_PAYMENT'].includes(ord.paymentStatus) &&
+        !['CANCELLED', 'REJECTED', 'EXPIRED', 'PAYMENT_FAILED'].includes(ord.status)
+      ) {
+        pendingPaymentsCount++;
+        pendingPaymentAmount += amt;
+      }
+
+      if (ord.status === 'CANCELLED') {
+        cancelledCount++;
+      } else if (ord.status === 'REJECTED') {
+        rejectedCount++;
+      }
+    }
+
+    const summary = {
+      totalOrders,
+      ordersCollected,
+      paidRevenue: paidRevenue.toFixed(2),
+      pendingPaymentsCount,
+      pendingPaymentAmount: pendingPaymentAmount.toFixed(2),
+      cancelledCount,
+      rejectedCount,
+      collectedOrderValue: collectedOrderValue.toFixed(2),
+    };
+
     if (orderList.length === 0) {
-      return NextResponse.json({ orders: [] });
+      return NextResponse.json({ orders: [], summary });
     }
 
     // Attach order items, customer name, batch info, and authorized pickup codes
@@ -122,7 +206,7 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    return NextResponse.json({ orders: enrichedOrders });
+    return NextResponse.json({ orders: enrichedOrders, summary });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 400 });
   }

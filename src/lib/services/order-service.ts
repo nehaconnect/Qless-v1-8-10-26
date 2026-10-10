@@ -569,6 +569,132 @@ export async function sellerRejectOrder(orderId: string, sellerUserId: string, r
 }
 
 /**
+ * Seller cancels a long-pending unpaid order with strict server-side payment protection.
+ */
+export async function sellerCancelUnpaidOrder(
+  orderId: string,
+  sellerUserId: string,
+  reason?: string,
+  sellerCanteenId?: string
+) {
+  const order = await db.query.orders.findFirst({
+    where: eq(orders.id, orderId),
+  });
+
+  if (!order) throw new Error('Order not found');
+  if (sellerCanteenId && order.canteenId !== sellerCanteenId) {
+    throw new Error('Forbidden: Cannot cancel order for another canteen');
+  }
+
+  // Check if order is already paid or in paid status
+  if (
+    order.paymentStatus === 'PAID' ||
+    ['CONFIRMED', 'PREPARING', 'READY', 'READY_FOR_PICKUP', 'COLLECTED'].includes(order.status)
+  ) {
+    throw new Error('Paid orders cannot be cancelled by the seller through this feature.');
+  }
+
+  if (order.status === 'CANCELLED') {
+    throw new Error('Order is already cancelled');
+  }
+  if (order.status === 'REJECTED') {
+    throw new Error('Order is already rejected');
+  }
+
+  const allowedStatuses = ['REQUESTED', 'TIME_CHANGE_PROPOSED', 'ACCEPTED', 'AWAITING_PAYMENT', 'PAYMENT_PENDING'];
+  if (!allowedStatuses.includes(order.status)) {
+    throw new Error(`Order cannot be cancelled in "${order.status}" status.`);
+  }
+
+  // Pre-check canonical payment records in database
+  const paidRecord = await db.query.payments.findFirst({
+    where: and(eq(payments.orderId, orderId), eq(payments.status, 'SUCCESS')),
+  });
+  if (paidRecord) {
+    throw new Error('Paid orders cannot be cancelled by the seller through this feature.');
+  }
+
+  return await db.transaction(async (tx) => {
+    // Re-verify canonical order and payment record inside atomic transaction to prevent race conditions
+    const freshOrder = await tx.query.orders.findFirst({
+      where: eq(orders.id, orderId),
+    });
+
+    if (!freshOrder) throw new Error('Order not found');
+    if (
+      freshOrder.paymentStatus === 'PAID' ||
+      ['CONFIRMED', 'PREPARING', 'READY', 'READY_FOR_PICKUP', 'COLLECTED'].includes(freshOrder.status)
+    ) {
+      throw new Error('Paid orders cannot be cancelled by the seller through this feature.');
+    }
+    if (freshOrder.status === 'CANCELLED') {
+      throw new Error('Order is already cancelled');
+    }
+    if (freshOrder.status === 'REJECTED') {
+      throw new Error('Order is already rejected');
+    }
+
+    const freshPaidRecord = await tx.query.payments.findFirst({
+      where: and(eq(payments.orderId, orderId), eq(payments.status, 'SUCCESS')),
+    });
+    if (freshPaidRecord) {
+      throw new Error('Paid orders cannot be cancelled by the seller through this feature.');
+    }
+
+    // Release reserved batch capacity exactly once
+    if (freshOrder.batchId) {
+      await tx.execute(sql`
+        UPDATE pickup_batches SET reserved_count = GREATEST(0, reserved_count - 1) WHERE id = ${freshOrder.batchId}
+      `);
+    }
+
+    const cancelReason = reason || 'Unpaid order cancelled by seller';
+
+    const [updated] = await tx
+      .update(orders)
+      .set({
+        status: 'CANCELLED',
+        paymentStatus: 'EXPIRED',
+        rejectionReason: 'SELLER_CANCELLED_UNPAID',
+        rejectionNote: cancelReason,
+        cancelledAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+      .returning();
+
+    await tx.insert(orderStatusHistory).values({
+      orderId,
+      fromStatus: freshOrder.status,
+      toStatus: 'CANCELLED',
+      changedByUserId: sellerUserId,
+      actorRole: 'SELLER',
+      reason: `Seller cancelled unpaid order: ${cancelReason}`,
+    });
+
+    await tx.insert(notifications).values({
+      userId: freshOrder.customerId,
+      orderId,
+      title: 'Order Cancelled by Seller',
+      message: `Your order #${freshOrder.orderNumber} was cancelled by the seller. Reason: ${cancelReason}`,
+      type: 'ORDER_CANCELLED',
+    });
+
+    await tx.insert(auditLogs).values({
+      canteenId: freshOrder.canteenId,
+      actorId: sellerUserId,
+      actorRole: 'SELLER',
+      action: 'ORDER_CANCELLED_UNPAID',
+      entityType: 'ORDER',
+      entityId: orderId,
+      metadata: { reason: cancelReason },
+    });
+
+    return updated;
+  });
+}
+
+/**
  * Seller suggests another pickup time
  */
 export async function sellerSuggestTime(
@@ -834,6 +960,14 @@ export async function confirmOrderPayment(params: {
   }
 
   return await db.transaction(async (tx) => {
+    // Re-verify status inside transaction
+    const freshOrder = await tx.query.orders.findFirst({
+      where: and(eq(orders.id, orderId), eq(orders.customerId, customerId))
+    });
+    if (!freshOrder || freshOrder.status === 'REJECTED' || freshOrder.status === 'CANCELLED') {
+      throw new Error(`Cannot pay for order in ${freshOrder?.status || 'invalid'} status.`);
+    }
+
     // Record payment
     await tx.insert(payments).values({
       orderId,
@@ -1013,6 +1147,9 @@ export async function sellerMarkOrderReady(orderId: string, sellerUserId: string
   if (sellerCanteenId && order.canteenId !== sellerCanteenId) {
     throw new Error('Forbidden: Cannot mark ready for another canteen');
   }
+  if (order.status === 'CANCELLED' || order.status === 'REJECTED') {
+    throw new Error(`Cannot mark order in ${order.status} status as ready`);
+  }
 
   const [ready] = await db.update(orders)
     .set({ status: 'READY', readyAt: new Date(), updatedAt: new Date() })
@@ -1051,6 +1188,9 @@ export async function sellerVerifyPickup(orderId: string, sellerUserId: string, 
     if (!order) throw new Error('Order not found');
     if (sellerCanteenId && order.canteenId !== sellerCanteenId) {
       throw new Error('Forbidden: Cannot verify pickup for another canteen');
+    }
+    if (order.status === 'CANCELLED' || order.status === 'REJECTED') {
+      throw new Error(`Cannot verify pickup for order in ${order.status} status`);
     }
 
     const pc = await tx.query.pickupCodes.findFirst({

@@ -5,6 +5,7 @@ import { requireAuth } from '@/lib/auth/server';
 import {
   sellerAcceptOrder,
   sellerRejectOrder,
+  sellerCancelUnpaidOrder,
   sellerSuggestTime,
   customerRespondTimeSuggestion,
   sellerMarkOrderReady,
@@ -111,6 +112,13 @@ export async function PATCH(
           return NextResponse.json({ error: 'Forbidden: Seller access required' }, { status: 403 });
         }
         result = await sellerRejectOrder(orderId, authUser.id, body.reason, sellerCanteen);
+        break;
+
+      case 'SELLER_CANCEL_UNPAID':
+        if (authUser.effectiveRole !== 'SELLER' && authUser.effectiveRole !== 'ADMIN') {
+          return NextResponse.json({ error: 'Forbidden: Seller access required' }, { status: 403 });
+        }
+        result = await sellerCancelUnpaidOrder(orderId, authUser.id, body.reason, sellerCanteen);
         break;
 
       case 'SELLER_SUGGEST_TIME':

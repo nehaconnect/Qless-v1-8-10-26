@@ -74,6 +74,8 @@ interface Order {
   sellerSuggestedTime: string | null;
   timeNegotiationStatus: string;
   paymentStatus: string;
+  rejectionReason?: string | null;
+  rejectionNote?: string | null;
   pickupCode?: string | null;
   batch: { displayLabel: string; startTime: string } | null;
   items: OrderItem[];
@@ -1175,19 +1177,65 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
                   </div>
                 ) : (
                   previousOrders.map(order => (
-                    <div key={order.id} className="bg-white rounded-2xl border border-slate-200 p-4 flex justify-between items-center text-xs">
-                      <div>
-                        <span className="font-mono font-bold text-slate-700">#{order.orderNumber}</span>
-                        <p className="text-[11px] text-slate-400 mt-0.5">{format12TimeIST(order.createdAt)}</p>
+                    <div key={order.id} className="bg-white rounded-2xl border border-slate-200 p-5 space-y-3 text-xs">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono font-bold text-slate-800">#{order.orderNumber}</span>
+                            <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-black ${
+                              order.status === 'COLLECTED' ? 'bg-emerald-100 text-emerald-800' :
+                              order.status === 'CANCELLED' ? 'bg-red-100 text-red-800' :
+                              order.status === 'REJECTED' ? 'bg-rose-100 text-rose-800' :
+                              'bg-slate-100 text-slate-700'
+                            }`}>
+                              {order.status === 'CANCELLED' ? 'CANCELLED BY SELLER' :
+                               order.status === 'REJECTED' ? 'REJECTED BY SELLER' :
+                               order.status}
+                            </span>
+                          </div>
+                          <p className="text-[11px] text-slate-400 mt-1">Created: {format12TimeIST(order.createdAt)}</p>
+                        </div>
+                        <div className="text-right">
+                          <span className="font-bold text-slate-900 text-sm">₹{order.totalAmount}</span>
+                          <span className="block text-[10px] font-semibold text-slate-500 uppercase">{order.paymentStatus}</span>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <span className="font-bold text-slate-800">₹{order.totalAmount}</span>
-                        <span className={`block text-[10px] font-black uppercase ${
-                          order.status === 'COLLECTED' ? 'text-emerald-600' : 'text-slate-400'
-                        }`}>
-                          {order.status}
-                        </span>
+
+                      {/* Items */}
+                      <div className="space-y-1 text-slate-600 bg-slate-50/80 p-3 rounded-xl">
+                        {order.items?.map((it: any, idx: number) => (
+                          <div key={idx} className="flex justify-between text-[11px]">
+                            <span>{it.quantity}× {it.itemName}</span>
+                            <span>₹{parseFloat(it.subtotal).toFixed(2)}</span>
+                          </div>
+                        ))}
                       </div>
+
+                      {/* Cancelled / Rejected Reason Note */}
+                      {order.status === 'CANCELLED' && (
+                        <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-900 text-[11px]">
+                          <span className="font-bold">Cancellation Reason: </span>
+                          <span>{order.rejectionNote || order.rejectionReason || 'Unpaid order cancelled after extended waiting period.'}</span>
+                        </div>
+                      )}
+
+                      {order.status === 'REJECTED' && (
+                        <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 text-[11px]">
+                          <span className="font-bold">Rejection Reason: </span>
+                          <span>{order.rejectionNote || order.rejectionReason || 'Order request declined by canteen.'}</span>
+                        </div>
+                      )}
+
+                      {['CANCELLED', 'REJECTED'].includes(order.status) && (
+                        <div className="pt-1 flex justify-end">
+                          <button
+                            onClick={() => setActiveTab('MENU')}
+                            className="px-3 py-1.5 rounded-lg bg-deep-blue text-white text-[11px] font-bold hover:bg-opacity-90 flex items-center gap-1"
+                          >
+                            <Plus className="w-3 h-3" /> Place New Order
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
