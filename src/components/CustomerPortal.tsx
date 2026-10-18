@@ -34,7 +34,6 @@ import {
   calculate15MinBatch,
   formatPickupTimeDisplay,
 } from '@/lib/pickup-time';
-import { IdentityBar } from './IdentityBar';
 
 interface MenuItem {
   id: string;

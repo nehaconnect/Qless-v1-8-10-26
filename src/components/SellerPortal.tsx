@@ -9,7 +9,6 @@ import {
   calculate15MinBatch,
   parseTimeToMinutes,
 } from '@/lib/pickup-time';
-import { IdentityBar } from './IdentityBar';
 import {
   ShoppingBag,
   Clock,

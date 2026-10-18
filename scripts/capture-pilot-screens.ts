@@ -104,31 +104,32 @@ async function captureScreen(
   console.log(`Navigating to http://localhost:3000 for ${expectedRole}...`);
   await client.send('Page.navigate', { url: 'http://localhost:3000' });
 
-  // Wait for loading to finish and IdentityBar to appear
+  // Wait for loading to finish and verify main content is loaded without identity bar
   let ready = false;
   for (let i = 0; i < 30; i++) {
     await sleep(500);
     const evalRes = await client.send('Runtime.evaluate', {
       expression: `(() => {
-        const bar = document.querySelector('[data-testid="identity-bar"]');
-        if (!bar) return null;
+        const main = document.querySelector('main');
+        const identityBar = document.querySelector('[data-testid="identity-bar"]');
+        if (!main) return null;
         return {
           found: true,
-          text: bar.innerText
+          hasIdentityBar: !!identityBar
         };
       })()`,
       returnByValue: true,
     });
 
     if (evalRes?.result?.value?.found) {
-      console.log(`IdentityBar detected for ${expectedRole}:`, evalRes.result.value.text.replace(/\n/g, ' '));
+      console.log(`Main content loaded for ${expectedRole}. IdentityBar present:`, evalRes.result.value.hasIdentityBar);
       ready = true;
       break;
     }
   }
 
   if (!ready) {
-    console.warn(`Warning: IdentityBar selector not found within timeout for ${expectedRole}, continuing anyway...`);
+    console.warn(`Warning: Main content not found within timeout for ${expectedRole}`);
   }
 
   // Extra settle time for images/fonts
@@ -206,7 +207,7 @@ async function main() {
     await captureScreen(
       client,
       sellerToken,
-      path.join(ARTIFACT_DIR, 'seller_screen_identity_bar.png'),
+      path.join(ARTIFACT_DIR, 'local_seller_screen_no_identity_bar.png'),
       'SELLER'
     );
 
@@ -216,7 +217,7 @@ async function main() {
     await captureScreen(
       client,
       customerToken,
-      path.join(ARTIFACT_DIR, 'customer_screen_identity_bar.png'),
+      path.join(ARTIFACT_DIR, 'local_customer_screen_no_identity_bar.png'),
       'CUSTOMER'
     );
 
@@ -226,7 +227,7 @@ async function main() {
     await captureScreen(
       client,
       adminToken,
-      path.join(ARTIFACT_DIR, 'admin_screen_identity_bar.png'),
+      path.join(ARTIFACT_DIR, 'local_admin_screen_no_identity_bar.png'),
       'ADMIN'
     );
 

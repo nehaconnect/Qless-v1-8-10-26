@@ -15,7 +15,6 @@ import {
   AlertTriangle,
   CheckCircle2,
 } from 'lucide-react';
-import { IdentityBar } from './IdentityBar';
 
 interface SellerStatusScreenProps {
   user: any;

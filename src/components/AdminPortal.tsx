@@ -30,7 +30,6 @@ import {
   Shield,
   UserCheck
 } from 'lucide-react';
-import { IdentityBar } from './IdentityBar';
 
 interface AdminMetrics {
   customers: number;
