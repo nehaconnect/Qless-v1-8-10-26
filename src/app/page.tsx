@@ -77,7 +77,8 @@ export default function Home() {
       if (data.canteens && Array.isArray(data.canteens)) {
         setCanteensList(data.canteens);
         if (data.canteens.length > 0) {
-          setSelectedCanteenId((prev) => prev || data.canteens[0].id);
+          const ipCanteen = data.canteens.find((c: any) => c.name === 'IP Canteen');
+          setSelectedCanteenId((prev) => prev || (ipCanteen ? ipCanteen.id : data.canteens[0].id));
         }
       }
     } catch {}
@@ -282,18 +283,38 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-transparent text-text-primary flex flex-col">
-      <Navbar
-        user={navbarUser}
-        onLogout={handleLogout}
-        isLoggingOut={isLoggingOut}
-        logoutError={logoutError}
-        onSwitchViewAs={handleSwitchViewAs}
-        onOpenSellerModal={() => setIsSellerModalOpen(true)}
-        canteenStatus={canteenStatus}
-        isLive={isLive}
-      />
+      {/* Navbar rendered for Seller, Admin and Login, or when session is not customer */}
+      {effectiveRole !== 'CUSTOMER' && (
+        <Navbar
+          user={navbarUser}
+          onLogout={handleLogout}
+          isLoggingOut={isLoggingOut}
+          logoutError={logoutError}
+          onSwitchViewAs={handleSwitchViewAs}
+          onOpenSellerModal={() => setIsSellerModalOpen(true)}
+          canteenStatus={canteenStatus}
+          isLive={isLive}
+        />
+      )}
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">
+      {/* Admin View-As active support banner if viewing customer workspace */}
+      {currentUser?.role === 'ADMIN' && effectiveRole === 'CUSTOMER' && (
+        <div className="bg-[#FFE0C7] text-[#073653] px-4 py-1.5 text-xs font-bold flex flex-wrap items-center justify-between gap-2 shadow-sm border-b border-[#FFE0C7] sticky top-0 z-50">
+          <div className="flex items-center gap-2">
+            <span>
+              Support View Mode: Viewing as <strong>CUSTOMER</strong> (Session is Admin)
+            </span>
+          </div>
+          <button
+            onClick={() => handleSwitchViewAs('ADMIN')}
+            className="px-2.5 py-0.5 bg-[#073653] text-white rounded-lg font-bold hover:bg-[#073653]/90 transition text-[11px]"
+          >
+            Exit View-As (Back to Admin)
+          </button>
+        </div>
+      )}
+
+      <main className={effectiveRole === 'CUSTOMER' ? "flex-1 w-full max-w-[1600px] mx-auto p-2 sm:p-4 lg:p-6" : "flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6"}>
         {effectiveRole === 'CUSTOMER' && (
           <CustomerPortal
             user={currentUser}
@@ -303,6 +324,7 @@ export default function Home() {
             selectedCanteenId={selectedCanteenId}
             onSelectCanteen={(cId) => setSelectedCanteenId(cId)}
             canteensList={canteensList}
+            onSwitchViewAs={currentUser.role === 'ADMIN' ? handleSwitchViewAs : undefined}
           />
         )}
         {effectiveRole === 'SELLER' && (
@@ -340,10 +362,12 @@ export default function Home() {
         }}
       />
 
-      <footer className="border-t border-[#BFEBDD]/60 py-5 text-center text-xs text-[#64839A] bg-white/80 backdrop-blur-md mt-auto">
-        <p className="font-extrabold text-[#073653]">QLess • Campus Canteen Ordering & Batch Queue Management</p>
-        <p className="text-[11px] text-[#64839A] mt-0.5">Indraprastha College for Women (IPCW) • IP Canteen • Delhi University</p>
-      </footer>
+      {effectiveRole !== 'CUSTOMER' && (
+        <footer className="border-t border-[#BFEBDD]/60 py-5 text-center text-xs text-[#64839A] bg-white/80 backdrop-blur-md mt-auto">
+          <p className="font-extrabold text-[#073653]">QLess • Campus Canteen Ordering & Batch Queue Management</p>
+          <p className="text-[11px] text-[#64839A] mt-0.5">Indraprastha College for Women (IPCW) • IP Canteen • Delhi University</p>
+        </footer>
+      )}
     </div>
   );
 }
