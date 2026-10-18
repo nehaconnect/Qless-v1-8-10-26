@@ -476,9 +476,26 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
     try {
       const res = await fetch(`/api/orders/${orderId}/pay`, {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ isSimulated: true }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Payment failed');
+
+      let data: any = null;
+      try {
+        const text = await res.text();
+        if (text && text.trim().length > 0) {
+          data = JSON.parse(text);
+        }
+      } catch {
+        // Non-JSON response
+      }
+
+      if (!res.ok) {
+        throw new Error(data?.error || `Payment failed (Status: ${res.status})`);
+      }
+
       setSuccessMsg('Payment confirmed! Your order is now queued for kitchen preparation.');
       fetchOrders(false);
     } catch (err: any) {

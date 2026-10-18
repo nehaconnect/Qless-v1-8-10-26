@@ -955,7 +955,10 @@ export async function confirmOrderPayment(params: {
   });
 
   if (!order) throw new Error('Order not found');
-  if (order.status === 'REJECTED' || order.status === 'CANCELLED') {
+  if (order.paymentStatus === 'PAID') {
+    throw new Error('Order has already been paid.');
+  }
+  if (order.status === 'REJECTED' || order.status === 'CANCELLED' || order.status === 'EXPIRED') {
     throw new Error(`Cannot pay for order in ${order.status} status.`);
   }
 
@@ -964,8 +967,18 @@ export async function confirmOrderPayment(params: {
     const freshOrder = await tx.query.orders.findFirst({
       where: and(eq(orders.id, orderId), eq(orders.customerId, customerId))
     });
-    if (!freshOrder || freshOrder.status === 'REJECTED' || freshOrder.status === 'CANCELLED') {
+    if (!freshOrder || freshOrder.status === 'REJECTED' || freshOrder.status === 'CANCELLED' || freshOrder.status === 'EXPIRED') {
       throw new Error(`Cannot pay for order in ${freshOrder?.status || 'invalid'} status.`);
+    }
+    if (freshOrder.paymentStatus === 'PAID') {
+      throw new Error('Order has already been paid.');
+    }
+
+    const existingPayment = await tx.query.payments.findFirst({
+      where: and(eq(payments.orderId, orderId), eq(payments.status, 'SUCCESS'))
+    });
+    if (existingPayment) {
+      throw new Error('Order has already been paid.');
     }
 
     // Record payment
