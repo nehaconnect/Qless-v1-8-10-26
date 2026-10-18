@@ -174,18 +174,35 @@ export const sellerProfiles = pgTable(
       .unique()
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    canteenId: uuid("canteen_id").notNull().references(() => canteens.id),
-    approvalStatus: varchar("approval_status", { length: 20 }).default("PENDING_APPROVAL").notNull(), // 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED'
+    canteenId: uuid("canteen_id").references(() => canteens.id),
+    approvalStatus: varchar("approval_status", { length: 30 }).default("PENDING_REVIEW").notNull(),
     approvedByAdminId: text("approved_by_admin_id").references(() => user.id),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
     rejectionReason: text("rejection_reason"),
+
+    // Seller Application Additive Fields
+    businessName: varchar("business_name", { length: 255 }),
+    legalName: varchar("legal_name", { length: 255 }),
+    businessType: varchar("business_type", { length: 100 }),
+    collegeId: uuid("college_id").references(() => colleges.id),
+    outletName: varchar("outlet_name", { length: 255 }),
+    outletLocation: varchar("outlet_location", { length: 255 }),
+    outletCity: varchar("outlet_city", { length: 100 }),
+    openingTime: time("opening_time"),
+    closingTime: time("closing_time"),
+    upiId: varchar("upi_id", { length: 100 }),
+    gstNumber: varchar("gst_number", { length: 50 }),
+    declarationConfirmed: boolean("declaration_confirmed").default(false).notNull(),
+    emailVerificationStatus: varchar("email_verification_status", { length: 50 }).default('PENDING_ADMIN_VERIFICATION').notNull(),
+    phoneVerificationStatus: varchar("phone_verification_status", { length: 50 }).default('PENDING_ADMIN_VERIFICATION').notNull(),
+
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [
     check(
       "chk_seller_approval_status",
-      sql`${table.approvalStatus} IN ('PENDING_APPROVAL', 'APPROVED', 'REJECTED')`
+      sql`${table.approvalStatus} IN ('PENDING_APPROVAL', 'PENDING_CONTACT_VERIFICATION', 'PENDING_REVIEW', 'APPROVED', 'REJECTED', 'DEACTIVATED')`
     ),
     uniqueIndex("uidx_canteen_approved_seller")
       .on(table.canteenId)

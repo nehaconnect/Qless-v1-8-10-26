@@ -7,18 +7,25 @@ import { CustomerPortal } from '@/components/CustomerPortal';
 import { SellerPortal } from '@/components/SellerPortal';
 import { AdminPortal } from '@/components/AdminPortal';
 import { SearchableSellerModal, SellerSelection } from '@/components/SearchableSellerModal';
+import { SellerStatusScreen } from '@/components/SellerStatusScreen';
+import { IdentityBar } from '@/components/IdentityBar';
 import { authClient } from '@/lib/auth/auth-client';
 import { Loader2 } from 'lucide-react';
 import { QLessLogo } from '@/components/QLessLogo';
 
 export default function Home() {
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [sellerProfile, setSellerProfile] = useState<any>(null);
   const [viewAsRole, setViewAsRole] = useState<'CUSTOMER' | 'SELLER' | 'ADMIN' | null>(null);
   const [selectedSellerForViewAs, setSelectedSellerForViewAs] = useState<SellerSelection | null>(null);
   const [isSellerModalOpen, setIsSellerModalOpen] = useState(false);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState<string | null>(null);
+
+  // Available approved canteens for global customer context
+  const [canteensList, setCanteensList] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedCanteenId, setSelectedCanteenId] = useState<string>('');
 
   // Live canteen status
   const [canteenStatus, setCanteenStatus] = useState<'OPEN' | 'TOO_BUSY' | 'CLOSED'>('OPEN');
@@ -30,11 +37,23 @@ export default function Home() {
       const res = await authClient.getSession();
       if (res.data?.user) {
         setCurrentUser(res.data.user);
+        const u = res.data.user as any;
+        if (u.role === 'SELLER') {
+          try {
+            const pRes = await fetch('/api/seller/profile');
+            const pData = await pRes.json();
+            if (pData.profile) {
+              setSellerProfile(pData.profile);
+            }
+          } catch {}
+        }
       } else {
         setCurrentUser(null);
+        setSellerProfile(null);
       }
     } catch {
       setCurrentUser(null);
+      setSellerProfile(null);
     } finally {
       setIsAuthLoading(false);
     }
@@ -51,9 +70,24 @@ export default function Home() {
     } catch {}
   };
 
+  // Fetch approved active canteens
+  const fetchCanteens = async () => {
+    try {
+      const res = await fetch('/api/canteens');
+      const data = await res.json();
+      if (data.canteens && Array.isArray(data.canteens)) {
+        setCanteensList(data.canteens);
+        if (data.canteens.length > 0) {
+          setSelectedCanteenId((prev) => prev || data.canteens[0].id);
+        }
+      }
+    } catch {}
+  };
+
   useEffect(() => {
     checkSession();
     fetchCanteenStatus();
+    fetchCanteens();
 
     // SSE Realtime Subscription
     let eventSource: EventSource | null = null;
@@ -146,6 +180,7 @@ export default function Home() {
       }
 
       setCurrentUser(null);
+      setSellerProfile(null);
       setViewAsRole(null);
       setSelectedSellerForViewAs(null);
       setLogoutError(null);
@@ -246,6 +281,29 @@ export default function Home() {
       }
     : currentUser;
 
+  // Identity Bar context calculation
+  const effectiveInstitution = (effectiveRole === 'SELLER' && sellerProfile?.collegeName)
+    ? sellerProfile.collegeName
+    : 'Indraprastha College for Women (IPCW)';
+
+  const effectiveOutlet = effectiveRole === 'SELLER'
+    ? (activeSellerUser?.canteenName || sellerProfile?.canteenName || sellerProfile?.outletName || 'IP Canteen')
+    : effectiveRole === 'ADMIN'
+      ? (selectedSellerForViewAs?.canteenName || 'All Outlets (IPCW)')
+      : (canteensList.find(c => c.id === selectedCanteenId)?.name || 'IP Canteen');
+
+  const effectiveSellerOperator = effectiveRole === 'SELLER'
+    ? (activeSellerUser?.name || currentUser?.name || 'Soman Singh')
+    : undefined;
+
+  const effectiveSellerStatus = effectiveRole === 'SELLER'
+    ? (sellerProfile?.approvalStatus || 'APPROVED')
+    : undefined;
+
+  const effectiveAdminContext = effectiveRole === 'ADMIN'
+    ? (selectedSellerForViewAs ? selectedSellerForViewAs.name : 'Campus Administration / All Outlets')
+    : undefined;
+
   return (
     <div className="min-h-screen bg-transparent text-text-primary flex flex-col">
       <Navbar
@@ -259,22 +317,49 @@ export default function Home() {
         isLive={isLive}
       />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6">
+      {/* Shared Top Identity Bar: directly below global navigation and above main page content */}
+      <div className="w-full max-w-7xl mx-auto px-4 sm:px-6 pt-4 pb-0">
+        <IdentityBar
+          organisation="QLess Pilot"
+          institution={effectiveInstitution}
+          outlet={effectiveOutlet}
+          sellerOperator={effectiveSellerOperator}
+          sellerStatus={effectiveSellerStatus}
+          adminContext={effectiveAdminContext}
+          role={effectiveRole}
+          canteensList={canteensList}
+          selectedCanteenId={selectedCanteenId}
+          onSelectCanteen={(cId) => setSelectedCanteenId(cId)}
+        />
+      </div>
+
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 pt-3">
         {effectiveRole === 'CUSTOMER' && (
           <CustomerPortal
             user={currentUser}
             canteenStatus={canteenStatus}
             onLogout={handleLogout}
             isViewAsAdmin={currentUser.role === 'ADMIN'}
+            selectedCanteenId={selectedCanteenId}
+            onSelectCanteen={(cId) => setSelectedCanteenId(cId)}
+            canteensList={canteensList}
           />
         )}
         {effectiveRole === 'SELLER' && (
-          <SellerPortal
-            user={activeSellerUser}
-            canteenStatus={canteenStatus}
-            onUpdateStatus={handleUpdateCanteenStatus}
-            onLogout={handleLogout}
-          />
+          currentUser.role === 'SELLER' && sellerProfile && sellerProfile.approvalStatus !== 'APPROVED' ? (
+            <SellerStatusScreen
+              user={currentUser}
+              profile={sellerProfile}
+              onLogout={handleLogout}
+            />
+          ) : (
+            <SellerPortal
+              user={activeSellerUser}
+              canteenStatus={canteenStatus}
+              onUpdateStatus={handleUpdateCanteenStatus}
+              onLogout={handleLogout}
+            />
+          )
         )}
         {effectiveRole === 'ADMIN' && (
           <AdminPortal

@@ -30,6 +30,7 @@ import {
   Shield,
   UserCheck
 } from 'lucide-react';
+import { IdentityBar } from './IdentityBar';
 
 interface AdminMetrics {
   customers: number;
@@ -50,6 +51,23 @@ interface SellerProfile {
   approvalStatus: string;
   canteenId?: string | null;
   canteenName?: string | null;
+  canteenLocation?: string | null;
+  businessName?: string | null;
+  legalName?: string | null;
+  businessType?: string | null;
+  collegeId?: string | null;
+  collegeName?: string | null;
+  outletName?: string | null;
+  outletLocation?: string | null;
+  outletCity?: string | null;
+  openingTime?: string | null;
+  closingTime?: string | null;
+  upiId?: string | null;
+  gstNumber?: string | null;
+  emailVerificationStatus?: string | null;
+  phoneVerificationStatus?: string | null;
+  rejectionReason?: string | null;
+  approvedAt?: string | null;
   createdAt: string;
 }
 
@@ -134,6 +152,10 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onSwitchViewAs, onOpen
   // Customer Deletion Modal
   const [targetDeleteCustomer, setTargetDeleteCustomer] = useState<CustomerRecord | null>(null);
 
+  // Seller Rejection / Deactivation Modal
+  const [targetReasonSeller, setTargetReasonSeller] = useState<{ profile: SellerProfile; action: 'REJECTED' | 'DEACTIVATED' } | null>(null);
+  const [reasonInput, setReasonInput] = useState('');
+
   const fetchOverview = async (isInitial = false) => {
     try {
       if (isInitial) setIsLoading(true);
@@ -174,7 +196,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onSwitchViewAs, onOpen
     return () => clearInterval(interval);
   }, [orderStatusFilter, orderSearch]);
 
-  const handleApproveSeller = async (sellerProfileId: string, status: 'APPROVED' | 'REJECTED' | 'DEACTIVATED') => {
+  const handleApproveSeller = async (
+    sellerProfileId: string,
+    status: 'APPROVED' | 'REJECTED' | 'DEACTIVATED',
+    rejectionReason?: string
+  ) => {
     if (submittingAction[sellerProfileId]) return;
     setActionError(null);
     setActionSuccess(null);
@@ -184,13 +210,15 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onSwitchViewAs, onOpen
       const res = await fetch('/api/admin/sellers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sellerProfileId, status }),
+        body: JSON.stringify({ sellerProfileId, status, rejectionReason }),
       });
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Failed to update seller.`);
 
       setActionSuccess(`Seller account successfully updated to ${status}.`);
+      setTargetReasonSeller(null);
+      setReasonInput('');
       await fetchOverview(false);
     } catch (err: any) {
       setActionError(err.message || 'Action failed. Please try again.');
@@ -738,63 +766,248 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onSwitchViewAs, onOpen
             </div>
           )}
 
-          {/* SELLER TABLE */}
+          {/* SELLER TABLE & APPLICATIONS */}
           {managementSubTab === 'SELLERS' && (
             <div className="space-y-4">
-              <p className="text-xs text-text-secondary">
-                Enforces critical business rule: <span className="font-bold text-slate-700">1 Canteen ↔ 1 Active Seller</span>. Concurrency protected.
-              </p>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
+                <div>
+                  <h4 className="font-extrabold text-sm text-[#073653]">Seller Applications & Accounts</h4>
+                  <p className="text-xs text-text-secondary">
+                    Review applicant details, verify contact authenticity, and approve first outlet activation.
+                    Enforces <span className="font-bold text-slate-700">1 Canteen ↔ 1 Active Approved Seller</span>.
+                  </p>
+                </div>
+              </div>
 
-              <div className="space-y-3">
-                {sellers.map(s => {
-                  const isSubmitting = Boolean(submittingAction[s.profileId]);
+              <div className="space-y-4">
+                {sellers.length === 0 ? (
+                  <div className="text-center py-12 text-slate-400 text-xs">
+                    <Inbox className="w-8 h-8 mx-auto mb-2 opacity-40" />
+                    No seller accounts or applications found.
+                  </div>
+                ) : (
+                  sellers.map(s => {
+                    const isSubmitting = Boolean(submittingAction[s.profileId]);
+                    const isPending =
+                      s.approvalStatus === 'PENDING_APPROVAL' ||
+                      s.approvalStatus === 'PENDING_REVIEW' ||
+                      s.approvalStatus === 'PENDING_CONTACT_VERIFICATION';
 
-                  return (
-                    <div
-                      key={s.profileId}
-                      className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                    >
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-bold text-xs text-text-primary">{s.name}</span>
-                          <span className="text-xs font-mono text-deep-blue font-bold">({s.username})</span>
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            s.approvalStatus === 'APPROVED' ? 'bg-emerald-100 text-emerald-800' :
-                            s.approvalStatus === 'PENDING_APPROVAL' ? 'bg-amber-100 text-amber-800' :
-                            'bg-rose-100 text-rose-800'
-                          }`}>
-                            {s.approvalStatus}
-                          </span>
+                    return (
+                      <div
+                        key={s.profileId}
+                        className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-4 hover:border-slate-300 transition"
+                      >
+                        {/* Header: Operator, Username, Status, Date */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                          <div className="flex items-center gap-2.5 flex-wrap">
+                            <span className="font-extrabold text-sm text-text-primary">{s.name}</span>
+                            <span className="text-xs font-mono font-bold text-deep-blue bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-100">
+                              {s.username}
+                            </span>
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase ${
+                                s.approvalStatus === 'APPROVED'
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                  : isPending
+                                  ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                  : s.approvalStatus === 'DEACTIVATED'
+                                  ? 'bg-slate-200 text-slate-800 border border-slate-300'
+                                  : 'bg-rose-100 text-rose-800 border border-rose-200'
+                              }`}
+                            >
+                              {isPending ? 'Pending Review' : s.approvalStatus}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-3 text-xs text-slate-400">
+                            <span>Applied: {s.createdAt ? new Date(s.createdAt).toLocaleDateString() : '--'}</span>
+                            {s.approvedAt && (
+                              <span className="text-emerald-700 font-semibold">
+                                Approved: {new Date(s.approvedAt).toLocaleDateString()}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <p className="text-[11px] text-text-secondary mt-1">
-                          Phone: +91 {s.phoneNumber} • Assigned Canteen:{' '}
-                          <span className="font-bold text-slate-800">{s.canteenName || 'None'}</span>
-                        </p>
-                      </div>
 
-                      <div className="flex items-center gap-2">
-                        {s.approvalStatus === 'PENDING_APPROVAL' && (
-                          <button
-                            onClick={() => handleApproveSeller(s.profileId, 'APPROVED')}
-                            disabled={isSubmitting}
-                            className="px-3.5 py-2 min-h-[44px] rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1.5"
-                          >
-                            <Check className="w-3.5 h-3.5" /> Approve
-                          </button>
+                        {/* Grid: 6 Application Details Cards */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                          {/* 1. Organisation / Business */}
+                          <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-0.5">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                              Organisation / Business
+                            </span>
+                            <p className="font-extrabold text-slate-900">{s.businessName || 'IP Canteen'}</p>
+                            {s.legalName && <p className="text-[11px] text-slate-500">Legal: {s.legalName}</p>}
+                            <p className="text-[11px] text-slate-500 capitalize">{s.businessType || 'Canteen Operator'}</p>
+                          </div>
+
+                          {/* 2. Institution / Campus */}
+                          <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-0.5">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                              Institution / Campus
+                            </span>
+                            <p className="font-extrabold text-slate-900">
+                              {s.collegeName || 'Indraprastha College for Women (IPCW)'}
+                            </p>
+                            <p className="text-[11px] text-slate-500">City: {s.outletCity || 'Delhi'}</p>
+                          </div>
+
+                          {/* 3. Outlet Details & Location */}
+                          <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-0.5">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                              First Outlet Name & Location
+                            </span>
+                            <p className="font-extrabold text-slate-900">{s.outletName || s.canteenName || 'IP Canteen'}</p>
+                            <p className="text-[11px] text-slate-500 truncate" title={s.outletLocation || s.canteenLocation || ''}>
+                              {s.outletLocation || s.canteenLocation || 'Main Campus'}
+                            </p>
+                            <p className="text-[10px] font-mono text-slate-500">
+                              Hours:{' '}
+                              {s.openingTime
+                                ? `${s.openingTime.slice(0, 5)} – ${s.closingTime ? s.closingTime.slice(0, 5) : '17:00'}`
+                                : '08:00 – 17:00'}
+                            </p>
+                          </div>
+
+                          {/* 4. Contact Details */}
+                          <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                              Applicant Contact
+                            </span>
+                            <p className="font-bold text-slate-800">+91 {s.phoneNumber}</p>
+                            <p className="text-[11px] text-slate-600 truncate" title={s.email}>
+                              {s.email}
+                            </p>
+                            {s.upiId && <p className="text-[10px] font-mono text-slate-500">UPI: {s.upiId}</p>}
+                          </div>
+
+                          {/* 5. Mobile & Email Verification State */}
+                          <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-1.5">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                              Contact Verification State
+                            </span>
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="text-slate-600">Mobile OTP:</span>
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                                  s.phoneVerificationStatus === 'VERIFIED_BY_ADMIN' ||
+                                  s.phoneVerificationStatus === 'VERIFIED'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-amber-100 text-amber-800'
+                                }`}
+                              >
+                                {s.phoneVerificationStatus === 'VERIFIED_BY_ADMIN' ||
+                                s.phoneVerificationStatus === 'VERIFIED'
+                                  ? 'Verified'
+                                  : 'Pending Admin Verification'}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="text-slate-600">Email:</span>
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${
+                                  s.emailVerificationStatus === 'VERIFIED_BY_ADMIN' ||
+                                  s.emailVerificationStatus === 'VERIFIED'
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-amber-100 text-amber-800'
+                                }`}
+                              >
+                                {s.emailVerificationStatus === 'VERIFIED_BY_ADMIN' ||
+                                s.emailVerificationStatus === 'VERIFIED'
+                                  ? 'Verified'
+                                  : 'Pending Admin Verification'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* 6. Assigned Outlet After Approval */}
+                          <div className="p-3 rounded-xl bg-slate-50 border border-slate-100 space-y-0.5">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">
+                              Assigned Outlet Workspace
+                            </span>
+                            <p className="font-extrabold text-slate-900">
+                              {s.canteenName ? (
+                                <span className="text-emerald-700 flex items-center gap-1">
+                                  <Store className="w-3.5 h-3.5" />
+                                  {s.canteenName}
+                                </span>
+                              ) : (
+                                <span className="text-slate-400 italic">None (Inactive until approval)</span>
+                              )}
+                            </p>
+                            {s.gstNumber && <p className="text-[10px] text-slate-500">GST: {s.gstNumber}</p>}
+                          </div>
+                        </div>
+
+                        {/* Rejection / Deactivation Reason Notice */}
+                        {(s.approvalStatus === 'REJECTED' || s.approvalStatus === 'DEACTIVATED') && s.rejectionReason && (
+                          <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs">
+                            <span className="font-bold uppercase tracking-wider text-[10px] text-rose-600 block mb-0.5">
+                              {s.approvalStatus === 'DEACTIVATED' ? 'Deactivation Reason:' : 'Rejection Reason:'}
+                            </span>
+                            <p className="font-semibold">{s.rejectionReason}</p>
+                          </div>
                         )}
-                        {s.approvalStatus === 'APPROVED' && (
-                          <button
-                            onClick={() => handleApproveSeller(s.profileId, 'DEACTIVATED')}
-                            disabled={isSubmitting}
-                            className="px-3.5 py-2 min-h-[44px] rounded-xl bg-rose-50 text-danger hover:bg-rose-100 text-xs font-bold disabled:opacity-50"
-                          >
-                            Deactivate Seller
-                          </button>
-                        )}
+
+                        {/* Action Controls */}
+                        <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                          {isPending && (
+                            <>
+                              <button
+                                onClick={() => handleApproveSeller(s.profileId, 'APPROVED')}
+                                disabled={isSubmitting}
+                                className="px-4 py-2 min-h-[40px] rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1.5 shadow-sm transition"
+                              >
+                                {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Verify & Approve Outlet</span>
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  setTargetReasonSeller({ profile: s, action: 'REJECTED' });
+                                  setReasonInput('');
+                                }}
+                                disabled={isSubmitting}
+                                className="px-3.5 py-2 min-h-[40px] rounded-xl bg-rose-50 text-danger hover:bg-rose-100 text-xs font-bold border border-rose-200 disabled:opacity-50 flex items-center gap-1.5 transition"
+                              >
+                                <X className="w-3.5 h-3.5" />
+                                <span>Reject Application</span>
+                              </button>
+                            </>
+                          )}
+
+                          {s.approvalStatus === 'APPROVED' && (
+                            <button
+                              onClick={() => {
+                                setTargetReasonSeller({ profile: s, action: 'DEACTIVATED' });
+                                setReasonInput('');
+                              }}
+                              disabled={isSubmitting}
+                              className="px-3.5 py-2 min-h-[40px] rounded-xl bg-rose-50 text-danger hover:bg-rose-100 text-xs font-bold border border-rose-200 disabled:opacity-50 flex items-center gap-1.5 transition"
+                            >
+                              <AlertCircle className="w-3.5 h-3.5" />
+                              <span>Deactivate Seller</span>
+                            </button>
+                          )}
+
+                          {(s.approvalStatus === 'REJECTED' || s.approvalStatus === 'DEACTIVATED') && (
+                            <button
+                              onClick={() => handleApproveSeller(s.profileId, 'APPROVED')}
+                              disabled={isSubmitting}
+                              className="px-4 py-2 min-h-[40px] rounded-xl bg-emerald-600 text-white text-xs font-bold hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-1.5 shadow-sm transition"
+                            >
+                              {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Re-Approve & Activate</span>
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </div>
             </div>
           )}
@@ -873,6 +1086,76 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ onSwitchViewAs, onOpen
               >
                 {submittingAction[targetDeleteCustomer.id] && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 <span>Confirm Delete</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Seller Reject / Deactivate Reason Modal */}
+      {targetReasonSeller && (
+        <div className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
+              <AlertCircle className="w-6 h-6" />
+            </div>
+
+            <div className="text-center space-y-1">
+              <h3 className="text-base font-extrabold text-text-primary">
+                {targetReasonSeller.action === 'REJECTED' ? 'Reject Seller Application' : 'Deactivate Seller Account'}
+              </h3>
+              <p className="text-xs text-text-secondary">
+                Please specify a mandatory reason for {targetReasonSeller.action === 'REJECTED' ? 'rejecting' : 'deactivating'}{' '}
+                <span className="font-bold text-slate-800">
+                  {targetReasonSeller.profile.name} ({targetReasonSeller.profile.username})
+                </span>
+                . This reason will be recorded in the audit log and displayed to the seller.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-black text-slate-700 mb-1">
+                Reason for {targetReasonSeller.action === 'REJECTED' ? 'Rejection' : 'Deactivation'} (Required)
+              </label>
+              <textarea
+                required
+                rows={3}
+                value={reasonInput}
+                onChange={(e) => setReasonInput(e.target.value)}
+                placeholder={
+                  targetReasonSeller.action === 'REJECTED'
+                    ? 'e.g. Unverified canteen operator credentials / unauthorized duplicate outlet application'
+                    : 'e.g. Temporary operational suspension / administrative review'
+                }
+                className="w-full p-3 rounded-xl border border-slate-200 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-deep-blue"
+              />
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                onClick={() => {
+                  setTargetReasonSeller(null);
+                  setReasonInput('');
+                }}
+                className="flex-1 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 min-h-[44px]"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() =>
+                  handleApproveSeller(
+                    targetReasonSeller.profile.profileId,
+                    targetReasonSeller.action,
+                    reasonInput.trim()
+                  )
+                }
+                disabled={!reasonInput.trim() || Boolean(submittingAction[targetReasonSeller.profile.profileId])}
+                className="flex-1 py-2.5 rounded-xl bg-danger text-white text-xs font-extrabold hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-1.5 min-h-[44px]"
+              >
+                {submittingAction[targetReasonSeller.profile.profileId] && (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                )}
+                <span>Confirm {targetReasonSeller.action === 'REJECTED' ? 'Rejection' : 'Deactivation'}</span>
               </button>
             </div>
           </div>

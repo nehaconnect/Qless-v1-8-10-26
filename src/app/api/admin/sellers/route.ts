@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, sellerProfiles, user, canteens, auditLogs, session } from '@/lib/db';
-import { eq, desc, and, ne } from 'drizzle-orm';
+import { db, sellerProfiles, user, canteens, colleges, auditLogs, session } from '@/lib/db';
+import { eq, desc, and, ne, sql } from 'drizzle-orm';
 import { requireAdmin } from '@/lib/auth/server';
 
 export async function GET(req: NextRequest) {
@@ -19,6 +19,22 @@ export async function GET(req: NextRequest) {
         approvalStatus: sellerProfiles.approvalStatus,
         canteenId: sellerProfiles.canteenId,
         canteenName: canteens.name,
+        canteenLocation: canteens.location,
+        businessName: sellerProfiles.businessName,
+        legalName: sellerProfiles.legalName,
+        businessType: sellerProfiles.businessType,
+        collegeId: sellerProfiles.collegeId,
+        collegeName: sql<string>`case when ${colleges.code} is not null then concat(${colleges.name}, ' (', ${colleges.code}, ')') else ${colleges.name} end`.as('college_name'),
+        outletName: sellerProfiles.outletName,
+        outletLocation: sellerProfiles.outletLocation,
+        outletCity: sellerProfiles.outletCity,
+        openingTime: sellerProfiles.openingTime,
+        closingTime: sellerProfiles.closingTime,
+        upiId: sellerProfiles.upiId,
+        gstNumber: sellerProfiles.gstNumber,
+        declarationConfirmed: sellerProfiles.declarationConfirmed,
+        emailVerificationStatus: sellerProfiles.emailVerificationStatus,
+        phoneVerificationStatus: sellerProfiles.phoneVerificationStatus,
         approvedAt: sellerProfiles.approvedAt,
         rejectionReason: sellerProfiles.rejectionReason,
         createdAt: sellerProfiles.createdAt,
@@ -26,6 +42,7 @@ export async function GET(req: NextRequest) {
       .from(sellerProfiles)
       .innerJoin(user, eq(sellerProfiles.userId, user.id))
       .leftJoin(canteens, eq(sellerProfiles.canteenId, canteens.id))
+      .leftJoin(colleges, eq(sql`COALESCE(${sellerProfiles.collegeId}, ${canteens.collegeId})`, colleges.id))
       .orderBy(desc(sellerProfiles.createdAt));
 
     const activeCanteens = await db.query.canteens.findMany({
@@ -52,6 +69,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if ((status === 'REJECTED' || status === 'DEACTIVATED') && (!rejectionReason || !rejectionReason.trim())) {
+      return NextResponse.json(
+        { error: `A valid reason is required when ${status.toLowerCase()}ing a seller account.` },
+        { status: 400 }
+      );
+    }
+
     const currentProfile = await db.query.sellerProfiles.findFirst({
       where: eq(sellerProfiles.id, sellerProfileId),
     });
@@ -67,33 +91,55 @@ export async function POST(req: NextRequest) {
     let assignedCanteenId = explicitCanteenId || currentProfile.canteenId;
 
     if (status === 'APPROVED') {
-      // If approving a non-Soman seller that has no assigned canteen or is improperly tied to IP Canteen
+      // Idempotency: If already approved with the same canteen, return success
+      if (currentProfile.approvalStatus === 'APPROVED' && assignedCanteenId) {
+        return NextResponse.json({ success: true, seller: currentProfile, message: 'Already approved.' });
+      }
+
+      // If approving a seller that has no assigned canteen or is improperly tied to IP Canteen
       if (sellerUser && sellerUser.username !== 'slr/soman_singh') {
         const ipCanteen = await db.query.canteens.findFirst({ where: eq(canteens.name, 'IP Canteen') });
         if (!assignedCanteenId || (ipCanteen && assignedCanteenId === ipCanteen.id)) {
-          const defaultCollege = await db.query.colleges.findFirst();
-          const cleanName = (sellerUser.name || 'Seller').trim();
-          const canteenName = cleanName.toLowerCase().endsWith('canteen')
-            ? cleanName
-            : `${cleanName}'s Canteen`;
+          // Use submitted outlet details, not placeholder defaults
+          const targetCollegeId = currentProfile.collegeId || (await db.query.colleges.findFirst())?.id!;
+          const finalOutletName = currentProfile.outletName || `${(sellerUser.name || 'Seller').trim()}'s Canteen`;
+          const finalLocation = currentProfile.outletLocation || 'Main Campus';
+          const finalOpening = currentProfile.openingTime || '08:00:00';
+          const finalClosing = currentProfile.closingTime || '17:00:00';
+          const finalUpi = currentProfile.upiId || undefined;
+
           const [isolatedCanteen] = await db
             .insert(canteens)
             .values({
-              collegeId: defaultCollege?.id!,
-              name: canteenName,
-              location: 'Campus Food Court',
+              collegeId: targetCollegeId,
+              name: finalOutletName,
+              location: finalLocation,
               operatingStatus: 'OPEN',
-              openingTime: '08:00:00',
-              closingTime: '17:00:00',
+              openingTime: finalOpening,
+              closingTime: finalClosing,
               defaultBatchCapacity: 10,
+              upiId: finalUpi,
               isActive: true,
             })
             .returning();
           assignedCanteenId = isolatedCanteen.id;
+        } else {
+          // If assigned canteen exists, ensure it is activated and has the submitted details
+          await db
+            .update(canteens)
+            .set({
+              isActive: true,
+              name: currentProfile.outletName || undefined,
+              location: currentProfile.outletLocation || undefined,
+              openingTime: currentProfile.openingTime || undefined,
+              closingTime: currentProfile.closingTime || undefined,
+              upiId: currentProfile.upiId || undefined,
+            })
+            .where(eq(canteens.id, assignedCanteenId));
         }
       }
 
-      // Concurrency check: Ensure no other seller is approved for this canteen
+      // Concurrency check: Ensure no other seller is already approved for this canteen
       const duplicateApproved = await db.query.sellerProfiles.findFirst({
         where: and(
           eq(sellerProfiles.canteenId, assignedCanteenId),
@@ -110,24 +156,30 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const effectiveDbStatus = status === 'DEACTIVATED' ? 'REJECTED' : status;
-
     const [updated] = await db
       .update(sellerProfiles)
       .set({
-        approvalStatus: effectiveDbStatus,
+        approvalStatus: status,
         canteenId: assignedCanteenId,
         approvedByAdminId: admin.id,
-        approvedAt: status === 'APPROVED' ? new Date() : null,
-        rejectionReason: status === 'REJECTED' || status === 'DEACTIVATED' ? rejectionReason || 'Deactivated by administrator' : null,
+        approvedAt: status === 'APPROVED' ? new Date() : currentProfile.approvedAt,
+        rejectionReason: status === 'REJECTED' || status === 'DEACTIVATED' ? rejectionReason.trim() : null,
+        emailVerificationStatus: status === 'APPROVED' ? 'VERIFIED_BY_ADMIN' : currentProfile.emailVerificationStatus,
+        phoneVerificationStatus: status === 'APPROVED' ? 'VERIFIED_BY_ADMIN' : currentProfile.phoneVerificationStatus,
         updatedAt: new Date(),
       })
       .where(eq(sellerProfiles.id, sellerProfileId))
       .returning();
 
-    // If deactivating/rejecting, revoke active sessions
+    // If deactivating/rejecting, revoke active sessions and deactivate the outlet if not IP Canteen
     if (status === 'REJECTED' || status === 'DEACTIVATED') {
       await db.delete(session).where(eq(session.userId, currentProfile.userId));
+      if (assignedCanteenId) {
+        const ipCanteen = await db.query.canteens.findFirst({ where: eq(canteens.name, 'IP Canteen') });
+        if (!ipCanteen || assignedCanteenId !== ipCanteen.id) {
+          await db.update(canteens).set({ isActive: false }).where(eq(canteens.id, assignedCanteenId));
+        }
+      }
     }
 
     await db.insert(auditLogs).values({
@@ -136,7 +188,12 @@ export async function POST(req: NextRequest) {
       action: status === 'APPROVED' ? 'SELLER_APPROVED' : status === 'DEACTIVATED' ? 'SELLER_DEACTIVATED' : 'SELLER_REJECTED',
       entityType: 'SELLER_PROFILE',
       entityId: sellerProfileId,
-      afterState: { status, rejectionReason, canteenId: assignedCanteenId },
+      afterState: {
+        status,
+        rejectionReason: status !== 'APPROVED' ? rejectionReason.trim() : null,
+        canteenId: assignedCanteenId,
+        verifiedByAdmin: status === 'APPROVED',
+      },
     });
 
     return NextResponse.json({ success: true, seller: updated });

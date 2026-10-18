@@ -3,6 +3,7 @@ import { username, phoneNumber } from "better-auth/plugins";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { db } from "@/lib/db";
 import * as schema from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 
 export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET || "qless-secure-production-secret-auth-key-2026",
@@ -130,28 +131,21 @@ export const auth = betterAuth({
                 collegeId: defaultCollege.id,
                 defaultCanteenId: defaultCanteen?.id,
               }).onConflictDoNothing();
-            } else if (createdUser.role === 'SELLER' && defaultCollege) {
-              // Ensure complete seller data isolation: create a dedicated, empty canteen workspace
-              const cleanName = (createdUser.name || 'Seller').trim();
-              const canteenName = cleanName.toLowerCase().endsWith('canteen')
-                ? cleanName
-                : `${cleanName}'s Canteen`;
-              const [newCanteen] = await db.insert(schema.canteens).values({
-                collegeId: defaultCollege.id,
-                name: canteenName,
-                location: 'Campus Food Court',
-                operatingStatus: 'OPEN',
-                openingTime: '08:00:00',
-                closingTime: '17:00:00',
-                defaultBatchCapacity: 10,
-                isActive: true,
-              }).returning();
-
-              await db.insert(schema.sellerProfiles).values({
-                userId: createdUser.id,
-                canteenId: newCanteen.id,
-                approvalStatus: 'PENDING_APPROVAL',
-              }).onConflictDoNothing();
+            } else if (createdUser.role === 'SELLER') {
+              // Do not create an active customer-visible canteen at registration.
+              // Seller workspace and canteen are created/activated only upon admin approval.
+              const existingProfile = await db.query.sellerProfiles.findFirst({
+                where: eq(schema.sellerProfiles.userId, createdUser.id)
+              });
+              if (!existingProfile) {
+                await db.insert(schema.sellerProfiles).values({
+                  userId: createdUser.id,
+                  canteenId: null,
+                  approvalStatus: 'PENDING_APPROVAL',
+                  emailVerificationStatus: 'PENDING_ADMIN_VERIFICATION',
+                  phoneVerificationStatus: 'PENDING_ADMIN_VERIFICATION',
+                }).onConflictDoNothing();
+              }
             }
           } catch (err) {
             console.error("Failed to insert profile in databaseHook:", err);

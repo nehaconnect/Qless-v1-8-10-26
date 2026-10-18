@@ -55,7 +55,7 @@ export async function getSessionUser(customHeaders?: Headers): Promise<Authentic
       const sp = await db.query.sellerProfiles.findFirst({
         where: eq(sellerProfiles.userId, u.id)
       });
-      canteenId = sp?.canteenId;
+      canteenId = sp?.canteenId ?? undefined;
       sellerApprovalStatus = sp?.approvalStatus;
     } else if (u.role === 'CUSTOMER') {
       const cp = await db.query.customerProfiles.findFirst({
@@ -79,13 +79,13 @@ export async function getSessionUser(customHeaders?: Headers): Promise<Authentic
         const sp = await db.query.sellerProfiles.findFirst({
           where: eq(sellerProfiles.userId, targetSellerUserId)
         });
-        canteenId = sp?.canteenId;
+        canteenId = sp?.canteenId ?? undefined;
         sellerApprovalStatus = sp?.approvalStatus || 'APPROVED';
       } else {
         const sp = await db.query.sellerProfiles.findFirst({
           where: eq(sellerProfiles.approvalStatus, 'APPROVED')
         });
-        canteenId = sp?.canteenId;
+        canteenId = sp?.canteenId ?? undefined;
         sellerApprovalStatus = 'APPROVED';
       }
     }

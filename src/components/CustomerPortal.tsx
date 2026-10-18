@@ -34,6 +34,7 @@ import {
   calculate15MinBatch,
   formatPickupTimeDisplay,
 } from '@/lib/pickup-time';
+import { IdentityBar } from './IdentityBar';
 
 interface MenuItem {
   id: string;
@@ -87,9 +88,20 @@ interface CustomerPortalProps {
   canteenStatus: 'OPEN' | 'TOO_BUSY' | 'CLOSED';
   onLogout?: () => void;
   isViewAsAdmin?: boolean;
+  selectedCanteenId?: string;
+  onSelectCanteen?: (canteenId: string) => void;
+  canteensList?: any[];
 }
 
-export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenStatus, onLogout, isViewAsAdmin }) => {
+export const CustomerPortal: React.FC<CustomerPortalProps> = ({
+  user,
+  canteenStatus,
+  onLogout,
+  isViewAsAdmin,
+  selectedCanteenId: propSelectedCanteenId,
+  onSelectCanteen: propOnSelectCanteen,
+  canteensList: propCanteensList,
+}) => {
   // Navigation: Menu, Cart, Orders, Notifications, Account
   const [activeTab, setActiveTab] = useState<'MENU' | 'CART' | 'ORDERS' | 'NOTIFICATIONS' | 'ACCOUNT'>('MENU');
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
@@ -126,8 +138,11 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
-  const [canteensList, setCanteensList] = useState<any[]>([]);
-  const [selectedCanteenId, setSelectedCanteenId] = useState<string>('');
+  const [internalCanteensList, setInternalCanteensList] = useState<any[]>([]);
+  const [internalSelectedCanteenId, setInternalSelectedCanteenId] = useState<string>('');
+
+  const canteensList = propCanteensList && propCanteensList.length > 0 ? propCanteensList : internalCanteensList;
+  const selectedCanteenId = propSelectedCanteenId || internalSelectedCanteenId;
 
   // Fetch Available Canteens
   const fetchCanteens = async () => {
@@ -135,9 +150,9 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
       const res = await fetch('/api/canteens');
       const data = await res.json();
       if (data.canteens && Array.isArray(data.canteens)) {
-        setCanteensList(data.canteens);
-        if (data.canteens.length > 0 && !selectedCanteenId) {
-          setSelectedCanteenId(data.canteens[0].id);
+        setInternalCanteensList(data.canteens);
+        if (data.canteens.length > 0 && !internalSelectedCanteenId && !propSelectedCanteenId) {
+          setInternalSelectedCanteenId(data.canteens[0].id);
         }
       }
     } catch {}
@@ -194,8 +209,20 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({ user, canteenSta
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    if (propSelectedCanteenId) {
+      setCart([]);
+      setSelectedCategory('ALL');
+      fetchMenu(false, propSelectedCanteenId);
+    }
+  }, [propSelectedCanteenId]);
+
   const handleSelectCanteen = (cId: string) => {
-    setSelectedCanteenId(cId);
+    if (propOnSelectCanteen) {
+      propOnSelectCanteen(cId);
+    } else {
+      setInternalSelectedCanteenId(cId);
+    }
     setCart([]);
     setSelectedCategory('ALL');
     fetchMenu(true, cId);
