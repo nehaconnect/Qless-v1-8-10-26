@@ -284,7 +284,8 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-transparent text-text-primary flex flex-col">
       {/* Navbar rendered for Seller, Admin and Login, or when session is not customer */}
-      {effectiveRole !== 'CUSTOMER' && (
+      {/* Navbar rendered for Admin (Customer and Seller have integrated header & sidebar) */}
+      {effectiveRole !== 'CUSTOMER' && effectiveRole !== 'SELLER' && (
         <Navbar
           user={navbarUser}
           onLogout={handleLogout}
@@ -297,12 +298,12 @@ export default function Home() {
         />
       )}
 
-      {/* Admin View-As active support banner if viewing customer workspace */}
-      {currentUser?.role === 'ADMIN' && effectiveRole === 'CUSTOMER' && (
+      {/* Admin View-As active support banner if viewing customer or seller workspace */}
+      {currentUser?.role === 'ADMIN' && (effectiveRole === 'CUSTOMER' || effectiveRole === 'SELLER') && (
         <div className="bg-[#FFE0C7] text-[#073653] px-4 py-1.5 text-xs font-bold flex flex-wrap items-center justify-between gap-2 shadow-sm border-b border-[#FFE0C7] sticky top-0 z-50">
           <div className="flex items-center gap-2">
             <span>
-              Support View Mode: Viewing as <strong>CUSTOMER</strong> (Session is Admin)
+              Support View Mode: Viewing as <strong>{effectiveRole}</strong> (Session is Admin)
             </span>
           </div>
           <button
@@ -314,7 +315,7 @@ export default function Home() {
         </div>
       )}
 
-      <main className={effectiveRole === 'CUSTOMER' ? "flex-1 w-full max-w-[1600px] mx-auto p-2 sm:p-4 lg:p-6" : "flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6"}>
+      <main className={(effectiveRole === 'CUSTOMER' || effectiveRole === 'SELLER') ? "flex-1 w-full max-w-[1600px] mx-auto p-2 sm:p-4 lg:p-6" : "flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6"}>
         {effectiveRole === 'CUSTOMER' && (
           <CustomerPortal
             user={currentUser}
@@ -340,6 +341,10 @@ export default function Home() {
               canteenStatus={canteenStatus}
               onUpdateStatus={handleUpdateCanteenStatus}
               onLogout={handleLogout}
+              canteensList={canteensList}
+              selectedCanteenId={selectedCanteenId}
+              onSelectCanteen={(cId) => setSelectedCanteenId(cId)}
+              onSwitchViewAs={currentUser.role === 'ADMIN' ? handleSwitchViewAs : undefined}
             />
           )
         )}
@@ -362,7 +367,7 @@ export default function Home() {
         }}
       />
 
-      {effectiveRole !== 'CUSTOMER' && (
+      {effectiveRole !== 'CUSTOMER' && effectiveRole !== 'SELLER' && (
         <footer className="border-t border-[#BFEBDD]/60 py-5 text-center text-xs text-[#64839A] bg-white/80 backdrop-blur-md mt-auto">
           <p className="font-extrabold text-[#073653]">QLess • Campus Canteen Ordering & Batch Queue Management</p>
           <p className="text-[11px] text-[#64839A] mt-0.5">Indraprastha College for Women (IPCW) • IP Canteen • Delhi University</p>

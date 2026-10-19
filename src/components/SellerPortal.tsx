@@ -39,8 +39,16 @@ import {
   Layers,
   CheckSquare,
   Menu as MenuIcon,
-  Calendar
+  Calendar,
+  Search,
+  Bell,
+  RotateCcw,
+  Upload,
+  Image as ImageIcon,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
+import { QLessLogo } from './QLessLogo';
 
 interface OrderItem {
   id: string;
@@ -86,6 +94,7 @@ interface MenuItem {
   isVegetarian: boolean;
   isAvailable: boolean;
   isTodaysMenu: boolean;
+  isArchived: boolean;
   categoryId: string;
   imageUrl: string | null;
   dailyCapacity: number;
@@ -98,11 +107,47 @@ interface MenuCategory {
   sortOrder: number;
 }
 
+// Curated high quality food photography matching IP Canteen dishes
+const ITEM_IMAGE_MAP: Record<string, string> = {
+  'Tea': 'https://images.unsplash.com/photo-1576092768241-dec231879fc3?auto=format&fit=crop&w=400&q=80',
+  'Coffee': 'https://images.unsplash.com/photo-1514432324607-a09d9b4aefdd?auto=format&fit=crop&w=400&q=80',
+  'Black Coffee': 'https://images.unsplash.com/photo-1517256064527-09c73fc73e38?auto=format&fit=crop&w=400&q=80',
+  'Green Tea': 'https://images.unsplash.com/photo-1627435601361-ec25f5b1d0e5?auto=format&fit=crop&w=400&q=80',
+  'Poha': 'https://images.unsplash.com/photo-1668236543090-82eba5ee5976?auto=format&fit=crop&w=400&q=80',
+  'Samosa': 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=400&q=80',
+  'Chole Samosa': 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=400&q=80',
+  'Idli Sambar': 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=400&q=80',
+  'Veg Noodles': 'https://images.unsplash.com/photo-1612927601601-6638404737ce?auto=format&fit=crop&w=400&q=80',
+  'Red Sauce Pasta': 'https://images.unsplash.com/photo-1621996346565-e3adc644d9fa?auto=format&fit=crop&w=400&q=80',
+  'White Sauce Pasta': 'https://images.unsplash.com/photo-1608897013039-887f21d8c804?auto=format&fit=crop&w=400&q=80',
+  'Chole Rice': 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80',
+  'Dal Rice': 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80',
+  'Rajma Rice': 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80',
+  'Veg Fried Rice': 'https://images.unsplash.com/photo-1603133872878-684f208fb84b?auto=format&fit=crop&w=400&q=80',
+  'Curd Rice': 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=400&q=80',
+  'Lemon Rice + Sambar': 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=400&q=80',
+  'Macaroni': 'https://images.unsplash.com/photo-1621996346565-e3adc644d9fa?auto=format&fit=crop&w=400&q=80',
+  'Veg Grilled Sandwich': 'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?auto=format&fit=crop&w=400&q=80',
+  'Bread Pakora': 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=400&q=80',
+  'Kachori + Sabji': 'https://images.unsplash.com/photo-1601050690597-df0568f70950?auto=format&fit=crop&w=400&q=80',
+  'Puri': 'https://images.unsplash.com/photo-1589301760014-d929f3979dbc?auto=format&fit=crop&w=400&q=80',
+  'Cold Coffee': 'https://images.unsplash.com/photo-1517701550927-30cf4ba1dba5?auto=format&fit=crop&w=400&q=80',
+  'Juices and Shakes': 'https://images.unsplash.com/photo-1553530666-ba11a7da3888?auto=format&fit=crop&w=400&q=80',
+  'Sweet Corn Salad': 'https://images.unsplash.com/photo-1512621776951-a57141f2eefd?auto=format&fit=crop&w=400&q=80',
+  'Masala Dosa': 'https://images.unsplash.com/photo-1668236543090-82eba5ee5976?auto=format&fit=crop&w=400&q=80',
+};
+
+const CANTEEN_THUMBNAIL_URL = 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=160&q=80';
+
 interface SellerPortalProps {
   user: any;
   canteenStatus: 'OPEN' | 'TOO_BUSY' | 'CLOSED';
   onUpdateStatus: (status: 'OPEN' | 'TOO_BUSY' | 'CLOSED') => void;
   onLogout?: () => void;
+  canteensList?: Array<{ id: string; name: string }>;
+  selectedCanteenId?: string;
+  onSelectCanteen?: (canteenId: string) => void;
+  onSwitchViewAs?: (role: 'CUSTOMER' | 'SELLER' | 'ADMIN') => void;
 }
 
 export const SellerPortal: React.FC<SellerPortalProps> = ({
@@ -110,6 +155,10 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   canteenStatus,
   onUpdateStatus,
   onLogout,
+  canteensList = [],
+  selectedCanteenId,
+  onSelectCanteen,
+  onSwitchViewAs,
 }) => {
   // Navigation: 5 sections
   const [tab, setTab] = useState<'ORDERS' | 'PREPARATION' | 'PICKUP' | 'MENU' | 'ACCOUNT'>('ORDERS');
@@ -206,9 +255,25 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
 
   // Menu Management
   const [menuFilterCategory, setMenuFilterCategory] = useState<string>('ALL');
+  const [searchQuery, setSearchQuery] = useState('');
   const [isAddItemOpen, setIsAddItemOpen] = useState(false);
   const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+
+  // Archive & Restore Confirmation Modals
+  const [confirmArchiveItem, setConfirmArchiveItem] = useState<MenuItem | null>(null);
+  const [confirmRestoreItem, setConfirmRestoreItem] = useState<MenuItem | null>(null);
+
+  // Compact Header Controls
+  const [showStatusDropdown, setShowStatusDropdown] = useState(false);
+  const [showCanteenDropdown, setShowCanteenDropdown] = useState(false);
+  const [showProfileDropdown, setShowProfileDropdown] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notificationsList, setNotificationsList] = useState<any[]>([]);
+  const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
+
+  // Horizontal Category Scroll Ref
+  const categoryScrollRef = React.useRef<HTMLDivElement>(null);
 
   // Form States for Menu Item
   const [formName, setFormName] = useState('');
@@ -221,6 +286,11 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   const [formIsTodaysMenu, setFormIsTodaysMenu] = useState(true);
   const [formImage, setFormImage] = useState('');
   const [formOrderLimit, setFormOrderLimit] = useState('50');
+
+  // Image Upload State
+  const [imageInputMode, setImageInputMode] = useState<'UPLOAD' | 'URL'>('UPLOAD');
+  const [imageUploadLoading, setImageUploadLoading] = useState(false);
+  const [imageError, setImageError] = useState<string | null>(null);
 
   // Form State for Category
   const [newCatName, setNewCatName] = useState('');
@@ -332,12 +402,13 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
         ordersUrl += `?startDate=${startDateStr}&endDate=${endDateStr || startDateStr}`;
       }
 
-      const [ordRes, batchRes, menuRes, catRes, canRes] = await Promise.all([
+      const [ordRes, batchRes, menuRes, catRes, canRes, notifRes] = await Promise.all([
         fetchWithViewAs(ordersUrl),
         fetchWithViewAs('/api/batches'),
-        fetchWithViewAs('/api/menu'),
+        fetchWithViewAs('/api/menu?includeArchived=true'),
         fetchWithViewAs('/api/menu/categories'),
         fetchWithViewAs('/api/canteen/status'),
+        fetchWithViewAs('/api/notifications').catch(() => null),
       ]);
 
       const [ordData, batchData, menuData, catData, canData] = await Promise.all([
@@ -355,6 +426,14 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       if (catData.categories) setCategories(catData.categories);
       else if (menuData.categories) setCategories(menuData.categories);
       if (canData.canteen) setCanteenData(canData.canteen);
+
+      if (notifRes && notifRes.ok) {
+        const notifData = await notifRes.json().catch(() => ({}));
+        if (notifData.notifications) {
+          setNotificationsList(notifData.notifications);
+          setUnreadNotificationsCount(notifData.unreadCount || 0);
+        }
+      }
     } catch (err: any) {
       console.error('Failed to refresh seller data:', err);
     } finally {
@@ -780,21 +859,134 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
     }
   };
 
-  const handleArchiveItem = async (itemId: string, itemName: string) => {
-    if (!confirm(`Archive "${itemName}"? Historical orders will be preserved, but customers will no longer see this item.`)) {
+  // Image File Upload Processor (Client-side Canvas compression to max 600x600 WebP/JPEG data URL)
+  const handleImageFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageError(null);
+
+    // Validate type
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setImageError('Unsupported format. Please select a JPG, PNG, or WebP image.');
       return;
     }
+
+    // Validate size (max 2.5MB)
+    if (file.size > 2.5 * 1024 * 1024) {
+      setImageError('File size exceeds 2.5MB. Please choose a smaller image.');
+      return;
+    }
+
+    setImageUploadLoading(true);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxDim = 600;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const dataUrl = canvas.toDataURL('image/webp', 0.85);
+            setFormImage(dataUrl);
+          } else {
+            setFormImage(event.target?.result as string);
+          }
+          setImageError(null);
+        } catch {
+          setImageError('Error processing image. Please try a different photo.');
+        } finally {
+          setImageUploadLoading(false);
+        }
+      };
+      img.onerror = () => {
+        setImageError('Invalid image file.');
+        setImageUploadLoading(false);
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.onerror = () => {
+      setImageError('Failed to read file from your device.');
+      setImageUploadLoading(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Helper to resolve dish photography (prefers custom image -> fallback to curated dish photo -> default)
+  const getItemImage = (item: MenuItem): string => {
+    if (item.imageUrl) return item.imageUrl;
+    if (ITEM_IMAGE_MAP[item.name]) return ITEM_IMAGE_MAP[item.name];
+    return 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80';
+  };
+
+  // Modal-driven Archive Confirmation Handler
+  const handleConfirmArchive = async () => {
+    if (!confirmArchiveItem) return;
+    const { id: itemId, name: itemName } = confirmArchiveItem;
     clearMessages();
-    setActionLoading(prev => ({ ...prev, [itemId]: 'DELETING' }));
+    setActionLoading(prev => ({ ...prev, [itemId]: 'ARCHIVING' }));
+
+    // Optimistically update
+    setMenuItems(prev => prev.map(m => (m.id === itemId ? { ...m, isArchived: true, isAvailable: false } : m)));
 
     try {
       const res = await fetch(`/api/menu?id=${itemId}`, { method: 'DELETE' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to archive item.');
-      setPortalSuccess(`Item "${itemName}" archived.`);
+      setPortalSuccess(`Item "${itemName}" archived successfully.`);
+      setConfirmArchiveItem(null);
       await refreshData(false);
     } catch (err: any) {
       setPortalError(err.message);
+      await refreshData(false);
+    } finally {
+      setActionLoading(prev => {
+        const copy = { ...prev };
+        delete copy[itemId];
+        return copy;
+      });
+    }
+  };
+
+  // Modal-driven Restore Confirmation Handler
+  const handleConfirmRestore = async () => {
+    if (!confirmRestoreItem) return;
+    const { id: itemId, name: itemName } = confirmRestoreItem;
+    clearMessages();
+    setActionLoading(prev => ({ ...prev, [itemId]: 'RESTORING' }));
+
+    // Optimistically restore to normal menu (preserves existing availability and category)
+    setMenuItems(prev => prev.map(m => (m.id === itemId ? { ...m, isArchived: false } : m)));
+
+    try {
+      const res = await fetch('/api/menu', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ itemId, isArchived: false }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to restore item.');
+      setPortalSuccess(`Item "${itemName}" restored to active menu.`);
+      setConfirmRestoreItem(null);
+      await refreshData(false);
+    } catch (err: any) {
+      setPortalError(err.message);
+      await refreshData(false);
     } finally {
       setActionLoading(prev => {
         const copy = { ...prev };
@@ -845,6 +1037,8 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
     setFormIsTodaysMenu(item.isTodaysMenu);
     setFormImage(item.imageUrl || '');
     setFormOrderLimit(item.dailyCapacity ? item.dailyCapacity.toString() : '50');
+    setImageError(null);
+    setImageInputMode('UPLOAD');
     setIsAddItemOpen(true);
   };
 
@@ -859,6 +1053,8 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
     setFormIsTodaysMenu(true);
     setFormImage('');
     setFormOrderLimit('50');
+    setImageError(null);
+    setImageInputMode('UPLOAD');
   };
 
   // -------------------------------------------------------------
@@ -976,12 +1172,44 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
     return expandedBatches[batchKey] !== false;
   };
 
-  // Filtered Menu Items
+  // Active (Non-Archived) Menu Items
+  const activeMenuItems = useMemo(() => {
+    return menuItems.filter(m => !m.isArchived);
+  }, [menuItems]);
+
+  // Today's Menu: Non-archived, marked for today, in stock (isAvailable), and priced
+  const todaysMenuItems = useMemo(() => {
+    return activeMenuItems.filter(m => m.isTodaysMenu && m.isAvailable && m.price !== null);
+  }, [activeMenuItems]);
+
+  // Archived Items
+  const archivedMenuItems = useMemo(() => {
+    return menuItems.filter(m => m.isArchived);
+  }, [menuItems]);
+
+  // Filtered Menu Items for Display
   const filteredMenuItems = useMemo(() => {
-    if (menuFilterCategory === 'ALL') return menuItems;
-    if (menuFilterCategory === 'TODAYS') return menuItems.filter(m => m.isTodaysMenu);
-    return menuItems.filter(m => m.categoryId === menuFilterCategory);
-  }, [menuItems, menuFilterCategory]);
+    let list: MenuItem[] = [];
+    if (menuFilterCategory === 'ALL') {
+      list = activeMenuItems;
+    } else if (menuFilterCategory === 'TODAYS') {
+      list = todaysMenuItems;
+    } else if (menuFilterCategory === 'ARCHIVED') {
+      list = archivedMenuItems;
+    } else {
+      list = activeMenuItems.filter(m => m.categoryId === menuFilterCategory);
+    }
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase().trim();
+      list = list.filter(m =>
+        m.name.toLowerCase().includes(q) ||
+        (m.description && m.description.toLowerCase().includes(q))
+      );
+    }
+
+    return list;
+  }, [activeMenuItems, todaysMenuItems, archivedMenuItems, menuFilterCategory, searchQuery]);
 
   const format12Time = (isoString?: string | Date | null) => {
     return formatPickupTimeDisplay(isoString);
@@ -1079,30 +1307,22 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       )}
 
       {/* ========================================================= */}
-      {/* DESKTOP SIDEBAR NAVIGATION */}
+      {/* DESKTOP SIDEBAR NAVIGATION (Reference Image 1) */}
       {/* ========================================================= */}
-      <aside className="hidden md:flex w-[240px] bg-[#DFF3E8]/90 backdrop-blur-md rounded-3xl border border-[#BFEBDD] flex-col shrink-0 p-4 shadow-sm h-fit self-start">
-        {/* Canteen Identity */}
-        <div className="p-3.5 bg-white/70 rounded-2xl border border-[#BFEBDD]/80 mb-6">
-          <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-xl bg-[#073653] text-white flex items-center justify-center font-bold shadow-sm shrink-0">
-              <Store className="w-5 h-5 text-[#00B894]" />
-            </div>
-            <div className="overflow-hidden">
-              <h2 className="text-sm font-extrabold text-[#073653] truncate">{canteenDisplayName}</h2>
-              <p className="text-[11px] font-bold text-[#64839A]">Seller Workspace</p>
-            </div>
-          </div>
+      <aside className="hidden md:flex w-[240px] bg-[#DFF3E8]/90 backdrop-blur-md rounded-3xl border border-[#BFEBDD] flex-col shrink-0 p-4 shadow-sm h-fit self-start sticky top-6 relative overflow-hidden">
+        {/* QLess Brand Logo Header */}
+        <div className="px-2 pt-2 pb-5 border-b border-[#BFEBDD]/60 mb-4">
+          <QLessLogo size="md" />
         </div>
 
         {/* Navigation Links */}
-        <nav className="flex-1 space-y-1.5">
+        <nav className="flex-1 space-y-1.5 relative z-10">
           <button
             onClick={() => setTab('ORDERS')}
             className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
               tab === 'ORDERS'
                 ? 'bg-[#00B894] text-white shadow-sm'
-                : 'text-[#073653] hover:bg-[#BFEBDD]/50 hover:text-[#073653]'
+                : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
             }`}
           >
             <div className="flex items-center gap-3">
@@ -1119,11 +1339,26 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
           </button>
 
           <button
+            onClick={() => setTab('MENU')}
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
+              tab === 'MENU'
+                ? 'bg-white/95 text-[#073653] shadow-sm border border-[#BFEBDD]/80 font-black'
+                : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <Utensils className="w-4 h-4 text-[#00B894]" />
+              <span>Menu</span>
+            </div>
+            <span className="text-[10px] text-[#64839A] font-semibold">{activeMenuItems.length}</span>
+          </button>
+
+          <button
             onClick={() => setTab('PREPARATION')}
             className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
               tab === 'PREPARATION'
                 ? 'bg-[#00B894] text-white shadow-sm'
-                : 'text-[#073653] hover:bg-[#BFEBDD]/50 hover:text-[#073653]'
+                : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
             }`}
           >
             <div className="flex items-center gap-3">
@@ -1144,7 +1379,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
             className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
               tab === 'PICKUP'
                 ? 'bg-[#00B894] text-white shadow-sm'
-                : 'text-[#073653] hover:bg-[#BFEBDD]/50 hover:text-[#073653]'
+                : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
             }`}
           >
             <div className="flex items-center gap-3">
@@ -1161,37 +1396,22 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
           </button>
 
           <button
-            onClick={() => setTab('MENU')}
-            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
-              tab === 'MENU'
-                ? 'bg-[#00B894] text-white shadow-sm'
-                : 'text-[#073653] hover:bg-[#BFEBDD]/50 hover:text-[#073653]'
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <Utensils className="w-4 h-4" />
-              <span>Menu</span>
-            </div>
-            <span className="text-[10px] text-[#64839A] font-semibold">{menuItems.length} items</span>
-          </button>
-
-          <button
             onClick={() => setTab('ACCOUNT')}
             className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
               tab === 'ACCOUNT'
                 ? 'bg-[#00B894] text-white shadow-sm'
-                : 'text-[#073653] hover:bg-[#BFEBDD]/50 hover:text-[#073653]'
+                : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
             }`}
           >
             <div className="flex items-center gap-3">
               <User className="w-4 h-4" />
-              <span>Account</span>
+              <span>Settings</span>
             </div>
           </button>
         </nav>
 
         {/* Quick Refresh Button & Footer Slogan */}
-        <div className="pt-4 border-t border-[#BFEBDD]/80 space-y-3">
+        <div className="pt-4 mt-6 border-t border-[#BFEBDD]/80 space-y-3 relative z-10">
           <button
             onClick={() => refreshData(false)}
             disabled={isRefreshing}
@@ -1206,73 +1426,239 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
             <p className="text-[10px] font-bold text-[#64839A] tracking-wider uppercase mt-0.5">More Campus Time</p>
           </div>
         </div>
+
+        {/* Botanical leaf watermark in bottom corner */}
+        <div className="absolute -bottom-6 -left-6 w-36 h-36 opacity-35 pointer-events-none select-none">
+          <svg viewBox="0 0 200 200" className="w-full h-full fill-[#00B894]">
+            <path d="M20 180 C40 120, 80 80, 160 40 C140 100, 100 140, 20 180 Z" opacity="0.3" />
+            <path d="M50 160 C80 120, 110 90, 170 60 C150 110, 110 140, 50 160 Z" opacity="0.2" />
+          </svg>
+        </div>
       </aside>
 
       {/* ========================================================= */}
       {/* MAIN CONTENT AREA */}
       {/* ========================================================= */}
-      <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">
-        {/* Top Header: Hamburger on Mobile + Canteen Operating Status Switcher */}
-        <div className="bg-surface rounded-2xl p-4 border border-slate-200 shadow-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6">
+      <main className="flex-1 min-w-0 w-full">
+        {/* ========================================================= */}
+        {/* TOP COMPACT HEADER (Reference Image 2) */}
+        {/* ========================================================= */}
+        <header className="bg-white/85 backdrop-blur-md rounded-2xl p-2.5 px-4 border border-[#BFEBDD]/70 shadow-sm flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 mb-6">
+          {/* Left: Outlet Thumbnail, Name, Operating Status Dropdown, Context */}
           <div className="flex items-center gap-3">
             <button
               onClick={() => setIsMobileDrawerOpen(true)}
-              className="p-2 rounded-xl text-slate-600 hover:bg-slate-100 md:hidden min-h-[44px] min-w-[44px] flex items-center justify-center border border-slate-200"
-              aria-label="Open navigation drawer"
+              className="p-2.5 rounded-xl bg-white/80 text-[#073653] hover:bg-white md:hidden border border-[#BFEBDD]/80 flex items-center justify-center min-h-[44px] min-w-[44px]"
+              aria-label="Open navigation menu"
             >
               <MenuIcon className="w-5 h-5" />
             </button>
-            <div>
-              <div className="flex items-center gap-2">
-                <h1 className="text-lg font-black text-text-primary">{canteenDisplayName}</h1>
-                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${
-                  canteenStatus === 'OPEN' ? 'bg-emerald-100 text-emerald-800' :
-                  canteenStatus === 'TOO_BUSY' ? 'bg-amber-100 text-amber-800' :
-                  'bg-rose-100 text-rose-800'
-                }`}>
-                  ● {canteenStatus}
-                </span>
+
+            <div className="flex items-center gap-3">
+              {/* Outlet Thumbnail */}
+              <div className="w-11 h-11 rounded-xl overflow-hidden shrink-0 bg-slate-100 border border-slate-200/60 shadow-sm">
+                <img
+                  src={CANTEEN_THUMBNAIL_URL}
+                  alt={canteenDisplayName}
+                  className="w-full h-full object-cover"
+                />
               </div>
-              <p className="text-xs text-text-secondary mt-0.5">
-                Hours: <span className="font-semibold text-slate-700">8:00 AM to 5:00 PM IST</span> • 15-Minute Batch Queue
-              </p>
+
+              {/* Outlet Info & Status Dropdown */}
+              <div>
+                <div className="flex items-center gap-2">
+                  <h1 className="text-sm font-extrabold text-[#073653] tracking-tight">{canteenDisplayName}</h1>
+
+                  {/* Status Dropdown Trigger */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowStatusDropdown(!showStatusDropdown)}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#DFF3E8] text-[#073653] border border-[#BFEBDD]/80 hover:bg-[#DFF3E8]/80 transition cursor-pointer"
+                    >
+                      <span className={`w-2 h-2 rounded-full ${
+                        canteenStatus === 'OPEN' ? 'bg-[#00B894] animate-pulse' :
+                        canteenStatus === 'TOO_BUSY' ? 'bg-amber-500' : 'bg-rose-500'
+                      }`} />
+                      <span>{canteenStatus === 'OPEN' ? 'Open' : canteenStatus === 'TOO_BUSY' ? 'Too Busy' : 'Closed'}</span>
+                      <ChevronDown className="w-3 h-3 text-[#64839A]" />
+                    </button>
+
+                    {/* Status Dropdown Menu */}
+                    {showStatusDropdown && (
+                      <div className="absolute top-full left-0 mt-1.5 w-36 bg-white rounded-xl shadow-lg border border-[#BFEBDD] p-1.5 z-50 animate-in fade-in zoom-in-95">
+                        <button
+                          onClick={() => { onUpdateStatus('OPEN'); setShowStatusDropdown(false); }}
+                          className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition ${
+                            canteenStatus === 'OPEN' ? 'bg-[#DFF3E8] text-[#073653]' : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span className="w-2 h-2 rounded-full bg-[#00B894]" />
+                          <span>Open</span>
+                        </button>
+                        <button
+                          onClick={() => { onUpdateStatus('TOO_BUSY'); setShowStatusDropdown(false); }}
+                          className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition ${
+                            canteenStatus === 'TOO_BUSY' ? 'bg-amber-50 text-amber-900' : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span className="w-2 h-2 rounded-full bg-amber-500" />
+                          <span>Too Busy</span>
+                        </button>
+                        <button
+                          onClick={() => { onUpdateStatus('CLOSED'); setShowStatusDropdown(false); }}
+                          className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition ${
+                            canteenStatus === 'CLOSED' ? 'bg-rose-50 text-rose-900' : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <span className="w-2 h-2 rounded-full bg-rose-500" />
+                          <span>Closed</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Multi-Canteen Switcher Dropdown (Admin / Multi-canteen Authorized Only) */}
+                  {canteensList && canteensList.length > 1 && user?.role === 'ADMIN' && (
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowCanteenDropdown(!showCanteenDropdown)}
+                        className="text-[11px] font-bold text-[#64839A] hover:text-[#073653] flex items-center gap-1 border-l border-slate-200 pl-2"
+                      >
+                        <span>Switch Outlet</span>
+                        <ChevronDown className="w-3 h-3" />
+                      </button>
+                      {showCanteenDropdown && (
+                        <div className="absolute top-full left-0 mt-1.5 w-56 bg-white rounded-xl shadow-lg border border-[#BFEBDD] p-1.5 z-50">
+                          {canteensList.map(c => (
+                            <button
+                              key={c.id}
+                              onClick={() => {
+                                onSelectCanteen?.(c.id);
+                                setShowCanteenDropdown(false);
+                                refreshData(false);
+                              }}
+                              className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center justify-between ${
+                                selectedCanteenId === c.id ? 'bg-[#DFF3E8] text-[#073653]' : 'text-slate-700 hover:bg-slate-50'
+                              }`}
+                            >
+                              <span>{c.name}</span>
+                              {selectedCanteenId === c.id && <Check className="w-3.5 h-3.5 text-[#00B894]" />}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-[#64839A] font-medium flex items-center gap-1.5 mt-0.5">
+                  <span>Indraprastha College for Women · Main Canteen</span>
+                  <span className="text-[#64839A]/60">|</span>
+                  <span>Today 8:00 AM – 5:00 PM IST | 15-min time slots</span>
+                </p>
+              </div>
             </div>
           </div>
 
-          {/* Canteen Status Toggle Buttons */}
-          <div className="flex items-center gap-1.5 bg-slate-100 p-1.5 rounded-xl border border-slate-200/60 w-full sm:w-auto">
-            <button
-              onClick={() => onUpdateStatus('OPEN')}
-              className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-xs font-black transition min-h-[36px] ${
-                canteenStatus === 'OPEN'
-                  ? 'bg-emerald-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              OPEN
-            </button>
-            <button
-              onClick={() => onUpdateStatus('TOO_BUSY')}
-              className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-xs font-black transition min-h-[36px] ${
-                canteenStatus === 'TOO_BUSY'
-                  ? 'bg-amber-500 text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              TOO BUSY
-            </button>
-            <button
-              onClick={() => onUpdateStatus('CLOSED')}
-              className={`flex-1 sm:flex-initial px-3 py-1.5 rounded-lg text-xs font-black transition min-h-[36px] ${
-                canteenStatus === 'CLOSED'
-                  ? 'bg-rose-600 text-white shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              CLOSED
-            </button>
+          {/* Right: Search Bar, Notifications, Profile Pill */}
+          <div className="flex items-center gap-3 self-end lg:self-auto w-full lg:w-auto justify-end">
+            {/* Search Input */}
+            <div className="relative flex-1 lg:w-64 max-w-xs">
+              <Search className="w-4 h-4 text-[#64839A] absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Search menu items..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-8 py-2 bg-white/90 border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-[#64839A] focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Notification Bell */}
+            <div className="relative">
+              <button
+                onClick={() => setShowNotifications(!showNotifications)}
+                className="p-2.5 rounded-full bg-white/90 border border-[#BFEBDD]/70 text-[#073653] hover:bg-white relative transition shadow-sm min-h-[40px] min-w-[40px] flex items-center justify-center shrink-0"
+                aria-label="Notifications"
+              >
+                <Bell className="w-4 h-4 text-[#073653]" />
+                {unreadNotificationsCount > 0 && (
+                  <span className="w-2.5 h-2.5 bg-[#FF5A5F] rounded-full absolute top-1.5 right-1.5 ring-2 ring-white" />
+                )}
+              </button>
+
+              {showNotifications && (
+                <div className="absolute right-0 mt-2 w-80 bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-[#BFEBDD] p-3 z-50 animate-in fade-in zoom-in-95">
+                  <div className="flex items-center justify-between pb-2 border-b border-[#DFF3E8]">
+                    <span className="text-xs font-black text-[#073653]">Notifications</span>
+                    <span className="text-[10px] text-[#64839A] font-bold">{unreadNotificationsCount} unread</span>
+                  </div>
+                  <div className="max-h-60 overflow-y-auto divide-y divide-slate-100 mt-2">
+                    {notificationsList.length === 0 ? (
+                      <p className="text-xs text-slate-400 py-4 text-center">No notifications</p>
+                    ) : (
+                      notificationsList.slice(0, 5).map((n, i) => (
+                        <div key={n.id || i} className="py-2 text-xs">
+                          <p className="font-bold text-[#073653]">{n.title || n.message}</p>
+                          {n.description && <p className="text-[11px] text-[#64839A] mt-0.5">{n.description}</p>}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Seller Profile Pill */}
+            <div className="relative">
+              <button
+                onClick={() => setShowProfileDropdown(!showProfileDropdown)}
+                className="bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/70 pl-1.5 pr-3 py-1 rounded-full shadow-sm flex items-center gap-2.5 hover:bg-white transition cursor-pointer min-h-[40px]"
+              >
+                <div className="w-8 h-8 rounded-full bg-[#FFE0C7] text-[#073653] font-black flex items-center justify-center text-xs border border-[#FFE0C7] shrink-0">
+                  {user?.name ? user.name.charAt(0).toUpperCase() : 'S'}
+                </div>
+                <div className="text-left text-xs pr-1 hidden sm:block">
+                  <p className="font-extrabold text-[#073653] leading-tight truncate max-w-[110px]">{user?.name || 'Simran Singh'}</p>
+                  <p className="text-[10px] text-[#64839A] font-medium leading-tight">Canteen Admin</p>
+                </div>
+                <ChevronDown className="w-3.5 h-3.5 text-[#64839A]" />
+              </button>
+
+              {/* Profile Dropdown */}
+              {showProfileDropdown && (
+                <div className="absolute right-0 mt-2 w-64 bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-[#BFEBDD] p-3 z-50 animate-in fade-in zoom-in-95">
+                  <div className="px-2 pb-3 border-b border-[#DFF3E8]">
+                    <p className="text-xs font-black text-[#073653]">{user?.name}</p>
+                    <p className="text-[11px] font-bold text-[#64839A] mt-0.5">{user?.username || user?.email}</p>
+                    <span className="inline-block mt-1.5 px-2 py-0.5 rounded-full text-[10px] font-black bg-[#DFF3E8] text-[#073653] uppercase">
+                      Canteen Admin
+                    </span>
+                  </div>
+                  {onLogout && (
+                    <div className="pt-2">
+                      <button
+                        onClick={onLogout}
+                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 transition flex items-center gap-2"
+                      >
+                        <LogOut className="w-3.5 h-3.5" />
+                        <span>Sign Out</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        </header>
 
         {/* Global Feedback Banners */}
         {portalError && (
@@ -2203,189 +2589,324 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
             )}
 
             {/* ========================================================= */}
-            {/* 4. MENU SECTION (Dedicated Menu Management) */}
+            {/* 4. MENU SECTION (Dedicated Menu Management - Reference Image 1) */}
             {/* ========================================================= */}
             {tab === 'MENU' && (
-              <div className="space-y-6">
+              <div className="space-y-5">
+                {/* Section Header: Title & Action Buttons */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
-                    <h2 className="text-base font-extrabold text-text-primary">Menu Management</h2>
-                    <p className="text-xs text-text-secondary">
-                      Add, edit, change prices, toggle availability, and configure Today's Menu.
+                    <h2 className="text-xl font-black text-[#073653] tracking-tight">Menu Management</h2>
+                    <p className="text-xs text-[#64839A] font-medium mt-0.5">
+                      Add, edit, change price, toggle availability, and configure Today's Menu.
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2.5">
+                    {/* Category Management Button */}
                     <button
                       onClick={() => setIsAddCategoryOpen(true)}
-                      className="px-3.5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-1.5 min-h-[44px]"
+                      className="px-3.5 py-2 bg-white/90 hover:bg-white text-[#073653] border border-[#BFEBDD] rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm min-h-[42px]"
                     >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>+ Category</span>
+                      <Plus className="w-3.5 h-3.5 text-[#00B894]" />
+                      <span>Category</span>
+                      <ChevronDown className="w-3 h-3 text-[#64839A]" />
                     </button>
+
+                    {/* Add Menu Item Button */}
                     <button
                       onClick={() => {
                         setEditingItem(null);
                         resetItemForm();
                         setIsAddItemOpen(true);
                       }}
-                      className="px-4 py-2.5 bg-primary-blue hover:bg-blue-600 text-white rounded-xl text-xs font-black shadow-tactile transition flex items-center gap-1.5 min-h-[44px]"
+                      className="px-4 py-2 bg-[#073653] hover:bg-[#073653]/90 text-white rounded-xl text-xs font-black shadow-sm transition flex items-center gap-1.5 min-h-[42px]"
                     >
-                      <Plus className="w-4 h-4" />
+                      <Plus className="w-4 h-4 text-[#00B894]" />
                       <span>Add Menu Item</span>
                     </button>
                   </div>
                 </div>
 
-                {/* Category Filter Pills */}
-                {categories.length > 0 && (
-                  <div className="flex flex-wrap items-center gap-2">
+                {/* Horizontal Scrollable Category Filter Row */}
+                <div className="relative flex items-center">
+                  <div
+                    ref={categoryScrollRef}
+                    className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1 scroll-smooth w-full pr-10"
+                    style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
+                  >
+                    {/* All Filter */}
                     <button
                       onClick={() => setMenuFilterCategory('ALL')}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition min-h-[36px] ${
+                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition whitespace-nowrap shrink-0 min-h-[36px] ${
                         menuFilterCategory === 'ALL'
-                          ? 'bg-primary-blue text-white shadow-tactile'
-                          : 'bg-surface border border-slate-200 text-slate-600 hover:bg-slate-50'
+                          ? 'bg-[#00B894] text-white shadow-sm'
+                          : 'bg-white/85 text-[#073653] border border-[#BFEBDD]/70 hover:bg-white'
                       }`}
                     >
-                      All ({menuItems.length})
+                      All ({activeMenuItems.length})
                     </button>
+
+                    {/* Today's Menu Filter */}
                     <button
                       onClick={() => setMenuFilterCategory('TODAYS')}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition min-h-[36px] ${
+                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition whitespace-nowrap shrink-0 min-h-[36px] ${
                         menuFilterCategory === 'TODAYS'
-                          ? 'bg-primary-blue text-white shadow-tactile'
-                          : 'bg-surface border border-slate-200 text-slate-600 hover:bg-slate-50'
+                          ? 'bg-[#00B894] text-white shadow-sm'
+                          : 'bg-white/85 text-[#073653] border border-[#BFEBDD]/70 hover:bg-white'
                       }`}
                     >
-                      Today's Menu ({menuItems.filter(m => m.isTodaysMenu).length})
+                      Today's Menu ({todaysMenuItems.length})
                     </button>
-                    {categories.map(cat => (
-                      <button
-                        key={cat.id}
-                        onClick={() => setMenuFilterCategory(cat.id)}
-                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition min-h-[36px] ${
-                          menuFilterCategory === cat.id
-                            ? 'bg-primary-blue text-white shadow-tactile'
-                            : 'bg-surface border border-slate-200 text-slate-600 hover:bg-slate-50'
-                        }`}
-                      >
-                        {cat.name} ({menuItems.filter(m => m.categoryId === cat.id).length})
-                      </button>
-                    ))}
+
+                    {/* Dynamic Categories */}
+                    {categories.map(cat => {
+                      const count = activeMenuItems.filter(m => m.categoryId === cat.id).length;
+                      return (
+                        <button
+                          key={cat.id}
+                          onClick={() => setMenuFilterCategory(cat.id)}
+                          className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition whitespace-nowrap shrink-0 min-h-[36px] ${
+                            menuFilterCategory === cat.id
+                              ? 'bg-[#00B894] text-white shadow-sm'
+                              : 'bg-white/85 text-[#073653] border border-[#BFEBDD]/70 hover:bg-white'
+                          }`}
+                        >
+                          {cat.name} ({count})
+                        </button>
+                      );
+                    })}
+
+                    {/* Archived Items Filter */}
+                    <button
+                      onClick={() => setMenuFilterCategory('ARCHIVED')}
+                      className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition whitespace-nowrap shrink-0 min-h-[36px] ${
+                        menuFilterCategory === 'ARCHIVED'
+                          ? 'bg-[#073653] text-white shadow-sm'
+                          : 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100/70'
+                      }`}
+                    >
+                      Archived ({archivedMenuItems.length})
+                    </button>
+                  </div>
+
+                  {/* Scroll Right Indicator Button */}
+                  <button
+                    onClick={() => {
+                      if (categoryScrollRef.current) {
+                        categoryScrollRef.current.scrollBy({ left: 160, behavior: 'smooth' });
+                      }
+                    }}
+                    className="absolute right-0 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/90 border border-[#BFEBDD] text-[#073653] shadow-sm flex items-center justify-center hover:bg-white transition shrink-0 z-10"
+                    aria-label="Scroll categories right"
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Search Active Notification */}
+                {searchQuery.trim() && (
+                  <div className="flex items-center justify-between text-xs bg-white/80 p-2 px-3 rounded-xl border border-[#BFEBDD]/60 text-[#64839A]">
+                    <span>
+                      Search results for <strong className="text-[#073653]">"{searchQuery}"</strong> ({filteredMenuItems.length} items found)
+                    </span>
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="text-xs font-bold text-[#00B894] hover:underline"
+                    >
+                      Clear search
+                    </button>
                   </div>
                 )}
 
-                {/* Empty State for Fresh Workspace */}
-                {menuItems.length === 0 ? (
-                  <div className="bg-surface rounded-3xl p-12 text-center border border-slate-200 shadow-sm max-w-lg mx-auto">
-                    <div className="w-16 h-16 rounded-2xl bg-blue-50 text-primary-blue flex items-center justify-center mx-auto mb-3 shadow-inner">
+                {/* Empty State */}
+                {filteredMenuItems.length === 0 ? (
+                  <div className="bg-white/90 rounded-3xl p-12 text-center border border-[#BFEBDD]/70 shadow-sm max-w-lg mx-auto">
+                    <div className="w-16 h-16 rounded-2xl bg-[#DFF3E8] text-[#00B894] flex items-center justify-center mx-auto mb-3 shadow-inner">
                       <Utensils className="w-8 h-8" />
                     </div>
-                    <h3 className="text-base font-extrabold text-text-primary">Your canteen is ready.</h3>
-                    <p className="text-xs text-text-secondary mt-1">
-                      Start by adding your first menu item so customers can order.
+                    <h3 className="text-base font-extrabold text-[#073653]">
+                      {menuFilterCategory === 'ARCHIVED'
+                        ? 'No archived menu items'
+                        : menuFilterCategory === 'TODAYS'
+                        ? 'No active items in Today\'s Menu'
+                        : searchQuery
+                        ? 'No items matching your search'
+                        : 'Your menu is empty'}
+                    </h3>
+                    <p className="text-xs text-[#64839A] mt-1">
+                      {menuFilterCategory === 'ARCHIVED'
+                        ? 'Archived items preserved from deletion will be listed here for restoration.'
+                        : menuFilterCategory === 'TODAYS'
+                        ? 'Items marked as in-stock and included in Today\'s Menu will appear here.'
+                        : 'Add items or update filters to see them listed in your menu.'}
                     </p>
-                    <button
-                      onClick={() => {
-                        setEditingItem(null);
-                        resetItemForm();
-                        setIsAddItemOpen(true);
-                      }}
-                      className="mt-6 px-6 py-3 bg-primary-blue hover:bg-blue-600 text-white rounded-2xl text-xs font-black shadow-tactile transition inline-flex items-center gap-2 min-h-[44px]"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>Add your first item</span>
-                    </button>
+                    {menuFilterCategory !== 'ARCHIVED' && (
+                      <button
+                        onClick={() => {
+                          setEditingItem(null);
+                          resetItemForm();
+                          setIsAddItemOpen(true);
+                        }}
+                        className="mt-6 px-6 py-2.5 bg-[#00B894] hover:bg-[#00a382] text-white rounded-xl text-xs font-black shadow-sm transition inline-flex items-center gap-2 min-h-[42px]"
+                      >
+                        <Plus className="w-4 h-4" />
+                        <span>Add New Item</span>
+                      </button>
+                    )}
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  /* Responsive Compact Grid (Reference Image 1) */
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
                     {filteredMenuItems.map(item => {
                       const isAvailUpdating = actionLoading[item.id] === 'UPDATING_AVAIL';
                       const isTodayUpdating = actionLoading[item.id] === 'UPDATING_TODAY';
-                      const isArchiving = actionLoading[item.id] === 'DELETING';
+                      const isArchiving = actionLoading[item.id] === 'ARCHIVING';
+                      const isRestoring = actionLoading[item.id] === 'RESTORING';
                       const catName = categories.find(c => c.id === item.categoryId)?.name || 'General';
 
                       return (
                         <div
                           key={item.id}
-                          className={`bg-surface rounded-2xl border p-5 shadow-sm transition flex flex-col justify-between ${
-                            !item.isAvailable ? 'opacity-70 border-slate-200 bg-slate-50/50' : 'border-slate-200'
+                          className={`bg-white/95 backdrop-blur-md rounded-3xl p-4.5 border border-[#BFEBDD]/70 shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between ${
+                            item.isArchived
+                              ? 'opacity-80 border-slate-200 bg-slate-50/70'
+                              : !item.isAvailable
+                              ? 'opacity-85 border-[#BFEBDD]/50'
+                              : ''
                           }`}
                         >
                           <div>
-                            {/* Card Top */}
-                            <div className="flex items-start justify-between gap-3">
-                              <div className="flex items-center gap-2">
-                                <span className={`w-2.5 h-2.5 rounded-full ${item.isVegetarian ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                            {/* Card Top: Category Dot & Label + Price */}
+                            <div className="flex items-center justify-between gap-2 pb-2">
+                              <div className="flex items-center gap-1.5 overflow-hidden">
+                                <span className={`w-2 h-2 rounded-full shrink-0 ${
+                                  item.isVegetarian ? 'bg-[#00B894]' : 'bg-rose-500'
+                                }`} />
+                                <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#64839A] truncate">
                                   {catName}
                                 </span>
                               </div>
-                              <span className="font-mono text-sm font-black text-deep-blue">
+                              <span className="font-mono text-sm font-black text-[#006699] shrink-0">
                                 {item.price !== null ? `₹${parseFloat(item.price).toFixed(2)}` : 'Price not fixed'}
                               </span>
                             </div>
 
-                            <h3 className="text-sm font-extrabold text-text-primary mt-1.5">{item.name}</h3>
-                            {item.description && (
-                              <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{item.description}</p>
-                            )}
-                            <p className="text-[11px] text-slate-400 mt-2 font-semibold">
-                              Daily Order Limit: <span className="text-slate-700">{item.dailyCapacity || 50}</span>
-                            </p>
+                            {/* Card Body: Info on Left, Dish Photography on Right */}
+                            <div className="flex items-start justify-between gap-3 mt-1">
+                              <div className="flex-1 min-w-0 pr-1">
+                                <h3 className="text-base font-extrabold text-[#073653] leading-snug tracking-tight truncate">
+                                  {item.name}
+                                </h3>
+                                <p className="text-[11px] text-[#64839A] font-medium mt-1">
+                                  Daily Order Limit: <span className="font-bold text-[#073653]">{item.dailyCapacity || 50}</span>
+                                </p>
+
+                                {/* Stock Label & Toggle Switch */}
+                                <div className="mt-3">
+                                  <span className={`text-xs font-bold block mb-1 ${
+                                    item.isAvailable ? 'text-[#073653]' : 'text-slate-400'
+                                  }`}>
+                                    {item.isAvailable ? 'In Stock' : 'Sold Out'}
+                                  </span>
+
+                                  {/* Availability Toggle Switch */}
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      disabled={item.isArchived || isAvailUpdating || item.price === null}
+                                      onClick={() => handleToggleItemAvailability(item.id, item.isAvailable)}
+                                      className={`w-11 h-6 rounded-full transition-colors flex items-center p-0.5 cursor-pointer disabled:cursor-not-allowed ${
+                                        item.isAvailable ? 'bg-[#00B894] justify-end' : 'bg-slate-300 justify-start'
+                                      }`}
+                                      aria-label={`Toggle availability for ${item.name}`}
+                                    >
+                                      <span className="w-5 h-5 rounded-full bg-white shadow-sm block transition-transform" />
+                                    </button>
+
+                                    {/* Active Today's Menu Badge */}
+                                    <button
+                                      type="button"
+                                      disabled={item.isArchived || isTodayUpdating}
+                                      onClick={() => handleToggleItemToday(item.id, item.isTodaysMenu)}
+                                      title="Toggle inclusion in Today's Menu"
+                                      className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider transition ${
+                                        item.isTodaysMenu
+                                          ? 'bg-[#DFF3E8] text-[#00B894] hover:bg-[#BFEBDD]'
+                                          : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                                      }`}
+                                    >
+                                      {item.isTodaysMenu ? 'ACTIVE' : 'OFF'}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Dish Photography with quick action button */}
+                              <div className="relative w-20 h-20 sm:w-22 sm:h-22 shrink-0 flex items-center justify-center">
+                                <div className="w-full h-full rounded-2xl overflow-hidden bg-white shadow-sm border border-slate-100">
+                                  <img
+                                    src={getItemImage(item)}
+                                    alt={item.name}
+                                    className="w-full h-full object-cover"
+                                    onError={(e) => {
+                                      // Fallback on broken custom image link
+                                      (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80';
+                                    }}
+                                  />
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => openEditItemModal(item)}
+                                  title="Quick edit item"
+                                  className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-white border border-[#BFEBDD] text-[#073653] shadow-sm flex items-center justify-center hover:bg-[#DFF3E8] transition"
+                                >
+                                  <Plus className="w-3.5 h-3.5 text-[#00B894]" />
+                                </button>
+                              </div>
+                            </div>
                           </div>
 
-                          {/* Toggles & Actions */}
-                          <div className="mt-5 pt-3 border-t border-slate-100 space-y-2.5">
-                            {/* In Stock vs Sold Out Switch */}
-                            <div className="flex items-center justify-between text-xs">
-                              <span className="font-bold text-slate-700">
-                                {item.isAvailable ? 'In Stock' : 'Sold Out'}
-                              </span>
-                              <button
-                                onClick={() => handleToggleItemAvailability(item.id, item.isAvailable)}
-                                disabled={isAvailUpdating || item.price === null}
-                                className={`w-12 h-6 rounded-full transition p-1 flex items-center ${
-                                  item.isAvailable ? 'bg-emerald-600 justify-end' : 'bg-slate-300 justify-start'
-                                }`}
-                              >
-                                <span className="w-4 h-4 rounded-full bg-white shadow-sm block" />
-                              </button>
-                            </div>
+                          {/* Footer Actions: Edit / Archive or Restore */}
+                          <div className="mt-4 pt-2.5 border-t border-[#BFEBDD]/50 flex items-center justify-between text-xs">
+                            <button
+                              type="button"
+                              onClick={() => openEditItemModal(item)}
+                              className="font-bold text-[#073653] hover:text-[#00B894] transition flex items-center gap-1.5 py-1"
+                            >
+                              <Edit className="w-3.5 h-3.5 text-[#64839A]" />
+                              <span>Edit</span>
+                            </button>
 
-                            {/* Today's Menu Toggle */}
-                            <div className="flex items-center justify-between text-xs">
-                              <span className="font-semibold text-slate-500">Today's Menu</span>
+                            {item.isArchived ? (
                               <button
-                                onClick={() => handleToggleItemToday(item.id, item.isTodaysMenu)}
-                                disabled={isTodayUpdating}
-                                className={`px-2 py-0.5 rounded-lg text-[10px] font-black ${
-                                  item.isTodaysMenu ? 'bg-blue-100 text-primary-blue' : 'bg-slate-100 text-slate-400'
-                                }`}
+                                type="button"
+                                disabled={isRestoring}
+                                onClick={() => setConfirmRestoreItem(item)}
+                                className="font-bold text-[#00B894] hover:bg-[#DFF3E8] px-2.5 py-1 rounded-lg transition flex items-center gap-1"
                               >
-                                {item.isTodaysMenu ? 'ACTIVE' : 'OFF'}
+                                {isRestoring ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <RotateCcw className="w-3.5 h-3.5" />
+                                )}
+                                <span>Restore</span>
                               </button>
-                            </div>
-
-                            {/* Edit / Archive Buttons */}
-                            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                            ) : (
                               <button
-                                onClick={() => openEditItemModal(item)}
-                                className="px-3 py-1.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition flex items-center gap-1 min-h-[36px]"
-                              >
-                                <Edit className="w-3.5 h-3.5" />
-                                <span>Edit</span>
-                              </button>
-                              <button
-                                onClick={() => handleArchiveItem(item.id, item.name)}
+                                type="button"
                                 disabled={isArchiving}
-                                className="px-3 py-1.5 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 transition flex items-center gap-1 min-h-[36px]"
+                                onClick={() => setConfirmArchiveItem(item)}
+                                className="font-bold text-rose-500 hover:text-rose-700 hover:bg-rose-50 px-2 py-1 rounded-lg transition flex items-center gap-1"
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
+                                {isArchiving ? (
+                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                ) : (
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                )}
                                 <span>Archive</span>
                               </button>
-                            </div>
+                            )}
                           </div>
                         </div>
                       );
@@ -2799,35 +3320,112 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                 />
               </div>
 
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Image URL (Optional)</label>
-                <input
-                  type="url"
-                  placeholder="https://... (Persistent image link)"
-                  value={formImage}
-                  onChange={e => setFormImage(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none min-h-[44px]"
-                />
+              {/* Food Image Selection: Upload from Device or Image URL (Section 6) */}
+              <div className="space-y-2 pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-[#073653] block text-xs">Food Image (Optional)</label>
+                  <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-[10px] font-bold">
+                    <button
+                      type="button"
+                      onClick={() => setImageInputMode('UPLOAD')}
+                      className={`px-2 py-0.5 rounded transition ${imageInputMode === 'UPLOAD' ? 'bg-white text-[#073653] shadow-sm font-black' : 'text-[#64839A]'}`}
+                    >
+                      Upload File
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setImageInputMode('URL')}
+                      className={`px-2 py-0.5 rounded transition ${imageInputMode === 'URL' ? 'bg-white text-[#073653] shadow-sm font-black' : 'text-[#64839A]'}`}
+                    >
+                      Image URL
+                    </button>
+                  </div>
+                </div>
+
+                {imageInputMode === 'UPLOAD' ? (
+                  <div>
+                    <label className="flex flex-col items-center justify-center border-2 border-dashed border-[#BFEBDD] hover:border-[#00B894] rounded-2xl p-3 cursor-pointer bg-[#DFF3E8]/30 hover:bg-[#DFF3E8]/50 transition text-center">
+                      {imageUploadLoading ? (
+                        <Loader2 className="w-5 h-5 text-[#00B894] animate-spin mb-1" />
+                      ) : (
+                        <Upload className="w-5 h-5 text-[#00B894] mb-1" />
+                      )}
+                      <span className="text-xs font-bold text-[#073653]">
+                        {imageUploadLoading ? 'Processing image...' : 'Choose image from device'}
+                      </span>
+                      <span className="text-[10px] text-[#64839A] mt-0.5">JPG, PNG, WebP (max 2.5MB)</span>
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        disabled={imageUploadLoading}
+                        onChange={handleImageFileUpload}
+                        className="hidden"
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <div>
+                    <input
+                      type="url"
+                      placeholder="https://... (Persistent image link)"
+                      value={formImage}
+                      onChange={e => {
+                        setFormImage(e.target.value);
+                        setImageError(null);
+                      }}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 focus:outline-none focus:border-[#00B894] min-h-[44px]"
+                    />
+                  </div>
+                )}
+
+                {imageError && (
+                  <p className="text-[11px] text-rose-600 font-bold">{imageError}</p>
+                )}
+
+                {/* Live Preview Box */}
+                {formImage && (
+                  <div className="flex items-center gap-3 p-2.5 bg-[#DFF3E8]/30 rounded-2xl border border-[#BFEBDD]">
+                    <div className="w-12 h-12 rounded-xl overflow-hidden bg-white border border-slate-200 shrink-0 shadow-sm">
+                      <img
+                        src={formImage}
+                        alt="Preview"
+                        className="w-full h-full object-cover"
+                        onError={() => setImageError('Failed to load image preview. Please check link or file.')}
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[11px] font-bold text-[#073653]">Live Preview Ready</p>
+                      <p className="text-[10px] text-[#64839A] truncate">{formImage.startsWith('data:') ? 'Custom uploaded device photo' : formImage}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setFormImage('')}
+                      className="px-2.5 py-1 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Toggles */}
               <div className="pt-2 flex items-center justify-between border-t border-slate-100">
-                <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-700">
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-[#073653]">
                   <input
                     type="checkbox"
                     checked={formIsVeg}
                     onChange={e => setFormIsVeg(e.target.checked)}
-                    className="w-4 h-4 rounded text-primary-blue"
+                    className="w-4 h-4 rounded text-[#00B894]"
                   />
                   <span>Vegetarian</span>
                 </label>
 
-                <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-700">
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-[#073653]">
                   <input
                     type="checkbox"
                     checked={formIsTodaysMenu}
                     onChange={e => setFormIsTodaysMenu(e.target.checked)}
-                    className="w-4 h-4 rounded text-primary-blue"
+                    className="w-4 h-4 rounded text-[#00B894]"
                   />
                   <span>Show in Today's Menu</span>
                 </label>
@@ -2846,7 +3444,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl text-xs font-black bg-primary-blue hover:bg-blue-600 text-white shadow-tactile min-h-[44px]"
+                  className="px-5 py-2 rounded-xl text-xs font-black bg-[#00B894] hover:bg-[#00a382] text-white shadow-sm min-h-[44px]"
                 >
                   {editingItem ? 'Save Changes' : 'Add Item'}
                 </button>
@@ -2890,12 +3488,100 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl text-xs font-black bg-primary-blue hover:bg-blue-600 text-white shadow-tactile min-h-[44px]"
+                  className="px-5 py-2 rounded-xl text-xs font-black bg-[#00B894] hover:bg-[#00a382] text-white shadow-sm min-h-[44px]"
                 >
                   Create Category
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL: CONFIRM ARCHIVE MENU ITEM (Section 7) */}
+      {/* ========================================================= */}
+      {confirmArchiveItem && (
+        <div
+          className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in"
+          onClick={(e) => { if (e.target === e.currentTarget) setConfirmArchiveItem(null); }}
+          onKeyDown={(e) => { if (e.key === 'Escape') setConfirmArchiveItem(null); }}
+          tabIndex={0}
+        >
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full border border-rose-100 shadow-2xl animate-scaleUp text-center">
+            <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto mb-3 shadow-inner">
+              <Trash2 className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-black text-[#073653]">Archive Menu Item?</h3>
+            <p className="text-xs text-[#64839A] mt-2">
+              Are you sure you want to archive <strong className="text-[#073653]">"{confirmArchiveItem.name}"</strong>? It will be removed from normal menu views, but historical order records remain preserved.
+            </p>
+            <div className="flex items-center gap-2 mt-6">
+              <button
+                type="button"
+                disabled={actionLoading[confirmArchiveItem.id] === 'ARCHIVING'}
+                onClick={() => setConfirmArchiveItem(null)}
+                className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition min-h-[44px]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={actionLoading[confirmArchiveItem.id] === 'ARCHIVING'}
+                onClick={handleConfirmArchive}
+                className="flex-1 py-2.5 px-4 rounded-xl text-xs font-black text-white bg-rose-600 hover:bg-rose-700 transition flex items-center justify-center gap-2 min-h-[44px] shadow-sm"
+              >
+                {actionLoading[confirmArchiveItem.id] === 'ARCHIVING' ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <span>Yes, Archive</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL: CONFIRM RESTORE MENU ITEM (Section 7) */}
+      {/* ========================================================= */}
+      {confirmRestoreItem && (
+        <div
+          className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in"
+          onClick={(e) => { if (e.target === e.currentTarget) setConfirmRestoreItem(null); }}
+          onKeyDown={(e) => { if (e.key === 'Escape') setConfirmRestoreItem(null); }}
+          tabIndex={0}
+        >
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full border border-[#BFEBDD] shadow-2xl animate-scaleUp text-center">
+            <div className="w-12 h-12 rounded-2xl bg-[#DFF3E8] text-[#00B894] flex items-center justify-center mx-auto mb-3 shadow-inner">
+              <RotateCcw className="w-6 h-6" />
+            </div>
+            <h3 className="text-base font-black text-[#073653]">Restore Menu Item?</h3>
+            <p className="text-xs text-[#64839A] mt-2">
+              Restore <strong className="text-[#073653]">"{confirmRestoreItem.name}"</strong> back to the active menu? It will return to its saved category and pricing.
+            </p>
+            <div className="flex items-center gap-2 mt-6">
+              <button
+                type="button"
+                disabled={actionLoading[confirmRestoreItem.id] === 'RESTORING'}
+                onClick={() => setConfirmRestoreItem(null)}
+                className="flex-1 py-2.5 px-4 rounded-xl text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 transition min-h-[44px]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={actionLoading[confirmRestoreItem.id] === 'RESTORING'}
+                onClick={handleConfirmRestore}
+                className="flex-1 py-2.5 px-4 rounded-xl text-xs font-black text-white bg-[#00B894] hover:bg-[#00a382] transition flex items-center justify-center gap-2 min-h-[44px] shadow-sm"
+              >
+                {actionLoading[confirmRestoreItem.id] === 'RESTORING' ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <span>Yes, Restore</span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

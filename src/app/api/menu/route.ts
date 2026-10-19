@@ -9,6 +9,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const canteenId = searchParams.get('canteenId');
     const todaysOnly = searchParams.get('todaysOnly') === 'true';
+    const includeArchived = searchParams.get('includeArchived') === 'true' && (authUser?.role === 'SELLER' || authUser?.role === 'ADMIN');
 
     let targetCanteenId: string | null = canteenId;
 
@@ -36,7 +37,7 @@ export async function GET(req: NextRequest) {
     let itemsQuery = db.select().from(menuItems)
       .where(and(
         eq(menuItems.canteenId, targetCanteenId),
-        eq(menuItems.isArchived, false),
+        includeArchived ? sql`true` : eq(menuItems.isArchived, false),
         todaysOnly ? eq(menuItems.isTodaysMenu, true) : sql`true`
       ));
 
@@ -180,7 +181,7 @@ export async function PATCH(req: NextRequest) {
     if (typeof isTodaysMenu === 'boolean') updates.isTodaysMenu = isTodaysMenu;
     if (typeof isArchived === 'boolean') {
       updates.isArchived = isArchived;
-      if (isArchived) updates.archivedAt = new Date();
+      updates.archivedAt = isArchived ? new Date() : null;
     }
     if (price === null || price === '' || body.priceNotFixed) {
       updates.price = null;
