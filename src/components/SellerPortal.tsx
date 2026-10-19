@@ -47,6 +47,8 @@ import {
   Image as ImageIcon,
   ChevronLeft,
   ChevronRight,
+  Home,
+  Settings,
 } from 'lucide-react';
 import { QLessLogo } from './QLessLogo';
 
@@ -160,8 +162,8 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   onSelectCanteen,
   onSwitchViewAs,
 }) => {
-  // Navigation: 5 sections
-  const [tab, setTab] = useState<'ORDERS' | 'PREPARATION' | 'PICKUP' | 'MENU' | 'ACCOUNT'>('ORDERS');
+  // Navigation: 6 sections (Dashboard, Orders, Preparation, Pickup, Menu, Settings)
+  const [tab, setTab] = useState<'DASHBOARD' | 'ORDERS' | 'PREPARATION' | 'PICKUP' | 'MENU' | 'ACCOUNT'>('MENU');
   const [isMobileDrawerOpen, setIsMobileDrawerOpen] = useState(false);
 
   // Core Data
@@ -264,13 +266,18 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   const [confirmArchiveItem, setConfirmArchiveItem] = useState<MenuItem | null>(null);
   const [confirmRestoreItem, setConfirmRestoreItem] = useState<MenuItem | null>(null);
 
-  // Compact Header Controls
+  // Compact Header Controls & Dropdown Refs
   const [showStatusDropdown, setShowStatusDropdown] = useState(false);
   const [showCanteenDropdown, setShowCanteenDropdown] = useState(false);
   const [showProfileDropdown, setShowProfileDropdown] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [notificationsList, setNotificationsList] = useState<any[]>([]);
   const [unreadNotificationsCount, setUnreadNotificationsCount] = useState(0);
+
+  const statusDropdownRef = React.useRef<HTMLDivElement>(null);
+  const profileDropdownRef = React.useRef<HTMLDivElement>(null);
+  const notificationsDropdownRef = React.useRef<HTMLDivElement>(null);
+  const canteenDropdownRef = React.useRef<HTMLDivElement>(null);
 
   // Horizontal Category Scroll Ref
   const categoryScrollRef = React.useRef<HTMLDivElement>(null);
@@ -447,6 +454,41 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
     const interval = setInterval(() => refreshData(false), 15000);
     return () => clearInterval(interval);
   }, [user?.id, user?.canteenId, ordersFilter, startDateStr, endDateStr]);
+
+  // Close header dropdowns on outside click or Escape key press (Section 3)
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (showStatusDropdown && statusDropdownRef.current && !statusDropdownRef.current.contains(target)) {
+        setShowStatusDropdown(false);
+      }
+      if (showProfileDropdown && profileDropdownRef.current && !profileDropdownRef.current.contains(target)) {
+        setShowProfileDropdown(false);
+      }
+      if (showNotifications && notificationsDropdownRef.current && !notificationsDropdownRef.current.contains(target)) {
+        setShowNotifications(false);
+      }
+      if (showCanteenDropdown && canteenDropdownRef.current && !canteenDropdownRef.current.contains(target)) {
+        setShowCanteenDropdown(false);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowStatusDropdown(false);
+        setShowProfileDropdown(false);
+        setShowNotifications(false);
+        setShowCanteenDropdown(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showStatusDropdown, showProfileDropdown, showNotifications, showCanteenDropdown]);
 
   const clearMessages = () => {
     setPortalError(null);
@@ -1253,11 +1295,12 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
 
             <nav className="space-y-1 flex-1">
               {[
+                { id: 'DASHBOARD', label: 'Dashboard', icon: Home, count: 0 },
                 { id: 'ORDERS', label: 'Orders', icon: ShoppingBag, count: incomingRequestedOrders.length },
                 { id: 'PREPARATION', label: 'Preparation', icon: ChefHat, count: batchOrdersMap.length },
                 { id: 'PICKUP', label: 'Pickup', icon: QrCode, count: readyOrders.length },
-                { id: 'MENU', label: 'Menu', icon: Utensils, count: menuItems.length },
-                { id: 'ACCOUNT', label: 'Account', icon: User, count: 0 },
+                { id: 'MENU', label: 'Menu', icon: Utensils, count: activeMenuItems.length },
+                { id: 'ACCOUNT', label: 'Settings', icon: Settings, count: 0 },
               ].map(item => {
                 const Icon = item.icon;
                 const isActive = tab === item.id;
@@ -1315,8 +1358,24 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
           <QLessLogo size="md" />
         </div>
 
-        {/* Navigation Links */}
+        {/* Navigation Links (Requested Order: Dashboard, Orders, Preparation, Pickup, Menu, Settings) */}
         <nav className="flex-1 space-y-1.5 relative z-10">
+          {/* 1. Dashboard */}
+          <button
+            onClick={() => setTab('DASHBOARD')}
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
+              tab === 'DASHBOARD'
+                ? 'bg-white/95 text-[#073653] shadow-sm border border-[#BFEBDD]/80 font-black'
+                : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <Home className={`w-4 h-4 ${tab === 'DASHBOARD' ? 'text-[#00B894]' : 'text-[#64839A]'}`} />
+              <span>Dashboard</span>
+            </div>
+          </button>
+
+          {/* 2. Orders */}
           <button
             onClick={() => setTab('ORDERS')}
             className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
@@ -1338,21 +1397,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
             )}
           </button>
 
-          <button
-            onClick={() => setTab('MENU')}
-            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
-              tab === 'MENU'
-                ? 'bg-white/95 text-[#073653] shadow-sm border border-[#BFEBDD]/80 font-black'
-                : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
-            }`}
-          >
-            <div className="flex items-center gap-3">
-              <Utensils className="w-4 h-4 text-[#00B894]" />
-              <span>Menu</span>
-            </div>
-            <span className="text-[10px] text-[#64839A] font-semibold">{activeMenuItems.length}</span>
-          </button>
-
+          {/* 3. Preparation */}
           <button
             onClick={() => setTab('PREPARATION')}
             className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
@@ -1374,6 +1419,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
             )}
           </button>
 
+          {/* 4. Pickup */}
           <button
             onClick={() => setTab('PICKUP')}
             className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
@@ -1395,6 +1441,23 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
             )}
           </button>
 
+          {/* 5. Menu */}
+          <button
+            onClick={() => setTab('MENU')}
+            className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
+              tab === 'MENU'
+                ? 'bg-white/95 text-[#073653] shadow-sm border border-[#BFEBDD]/80 font-black'
+                : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <Utensils className={`w-4 h-4 ${tab === 'MENU' ? 'text-[#00B894]' : 'text-[#64839A]'}`} />
+              <span>Menu</span>
+            </div>
+            <span className="text-[10px] text-[#64839A] font-semibold">{activeMenuItems.length}</span>
+          </button>
+
+          {/* 6. Settings */}
           <button
             onClick={() => setTab('ACCOUNT')}
             className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
@@ -1404,7 +1467,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
             }`}
           >
             <div className="flex items-center gap-3">
-              <User className="w-4 h-4" />
+              <Settings className="w-4 h-4" />
               <span>Settings</span>
             </div>
           </button>
@@ -1441,9 +1504,9 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       {/* ========================================================= */}
       <main className="flex-1 min-w-0 w-full">
         {/* ========================================================= */}
-        {/* TOP COMPACT HEADER (Reference Image 2) */}
+        {/* TOP COMPACT HEADER (Reference Image 2) - Elevated Stacking */}
         {/* ========================================================= */}
-        <header className="bg-white/85 backdrop-blur-md rounded-2xl p-2.5 px-4 border border-[#BFEBDD]/70 shadow-sm flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 mb-6">
+        <header className="relative z-40 bg-white/90 backdrop-blur-md rounded-2xl p-2.5 px-4 border border-[#BFEBDD]/70 shadow-sm flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3 mb-6">
           {/* Left: Outlet Thumbnail, Name, Operating Status Dropdown, Context */}
           <div className="flex items-center gap-3">
             <button
@@ -1470,7 +1533,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                   <h1 className="text-sm font-extrabold text-[#073653] tracking-tight">{canteenDisplayName}</h1>
 
                   {/* Status Dropdown Trigger */}
-                  <div className="relative">
+                  <div ref={statusDropdownRef} className="relative">
                     <button
                       onClick={() => setShowStatusDropdown(!showStatusDropdown)}
                       className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#DFF3E8] text-[#073653] border border-[#BFEBDD]/80 hover:bg-[#DFF3E8]/80 transition cursor-pointer"
@@ -1485,10 +1548,10 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
 
                     {/* Status Dropdown Menu */}
                     {showStatusDropdown && (
-                      <div className="absolute top-full left-0 mt-1.5 w-36 bg-white rounded-xl shadow-lg border border-[#BFEBDD] p-1.5 z-50 animate-in fade-in zoom-in-95">
+                      <div className="absolute top-full left-0 mt-1.5 w-36 bg-white rounded-xl shadow-2xl border border-[#BFEBDD] p-1.5 z-50 animate-in fade-in zoom-in-95">
                         <button
                           onClick={() => { onUpdateStatus('OPEN'); setShowStatusDropdown(false); }}
-                          className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition ${
+                          className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition cursor-pointer ${
                             canteenStatus === 'OPEN' ? 'bg-[#DFF3E8] text-[#073653]' : 'text-slate-700 hover:bg-slate-50'
                           }`}
                         >
@@ -1497,7 +1560,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                         </button>
                         <button
                           onClick={() => { onUpdateStatus('TOO_BUSY'); setShowStatusDropdown(false); }}
-                          className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition ${
+                          className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition cursor-pointer ${
                             canteenStatus === 'TOO_BUSY' ? 'bg-amber-50 text-amber-900' : 'text-slate-700 hover:bg-slate-50'
                           }`}
                         >
@@ -1506,7 +1569,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                         </button>
                         <button
                           onClick={() => { onUpdateStatus('CLOSED'); setShowStatusDropdown(false); }}
-                          className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition ${
+                          className={`w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-2 transition cursor-pointer ${
                             canteenStatus === 'CLOSED' ? 'bg-rose-50 text-rose-900' : 'text-slate-700 hover:bg-slate-50'
                           }`}
                         >
@@ -1583,7 +1646,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
             </div>
 
             {/* Notification Bell */}
-            <div className="relative">
+            <div ref={notificationsDropdownRef} className="relative">
               <button
                 onClick={() => setShowNotifications(!showNotifications)}
                 className="p-2.5 rounded-full bg-white/90 border border-[#BFEBDD]/70 text-[#073653] hover:bg-white relative transition shadow-sm min-h-[40px] min-w-[40px] flex items-center justify-center shrink-0"
@@ -1596,7 +1659,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
               </button>
 
               {showNotifications && (
-                <div className="absolute right-0 mt-2 w-80 bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-[#BFEBDD] p-3 z-50 animate-in fade-in zoom-in-95">
+                <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-[#BFEBDD] p-3 z-50 animate-in fade-in zoom-in-95">
                   <div className="flex items-center justify-between pb-2 border-b border-[#DFF3E8]">
                     <span className="text-xs font-black text-[#073653]">Notifications</span>
                     <span className="text-[10px] text-[#64839A] font-bold">{unreadNotificationsCount} unread</span>
@@ -1617,8 +1680,8 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
               )}
             </div>
 
-            {/* Seller Profile Pill */}
-            <div className="relative">
+            {/* Seller Profile Pill with Elevated Dropdown Stacking (Section 3 B) */}
+            <div ref={profileDropdownRef} className="relative z-50">
               <button
                 onClick={() => setShowProfileDropdown(!showProfileDropdown)}
                 className="bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/70 pl-1.5 pr-3 py-1 rounded-full shadow-sm flex items-center gap-2.5 hover:bg-white transition cursor-pointer min-h-[40px]"
@@ -1633,9 +1696,9 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                 <ChevronDown className="w-3.5 h-3.5 text-[#64839A]" />
               </button>
 
-              {/* Profile Dropdown */}
+              {/* Profile Dropdown - Solid background, high z-index, shadow */}
               {showProfileDropdown && (
-                <div className="absolute right-0 mt-2 w-64 bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-[#BFEBDD] p-3 z-50 animate-in fade-in zoom-in-95">
+                <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-2xl shadow-2xl border border-[#BFEBDD] p-3 z-50 animate-in fade-in zoom-in-95">
                   <div className="px-2 pb-3 border-b border-[#DFF3E8]">
                     <p className="text-xs font-black text-[#073653]">{user?.name}</p>
                     <p className="text-[11px] font-bold text-[#64839A] mt-0.5">{user?.username || user?.email}</p>
@@ -1646,10 +1709,13 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                   {onLogout && (
                     <div className="pt-2">
                       <button
-                        onClick={onLogout}
-                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 transition flex items-center gap-2"
+                        onClick={() => {
+                          setShowProfileDropdown(false);
+                          onLogout();
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 transition flex items-center gap-2 cursor-pointer"
                       >
-                        <LogOut className="w-3.5 h-3.5" />
+                        <LogOut className="w-4 h-4" />
                         <span>Sign Out</span>
                       </button>
                     </div>
@@ -1694,6 +1760,102 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
           </div>
         ) : (
           <>
+            {/* ========================================================= */}
+            {/* 0. CANTEEN DASHBOARD SECTION (Section 2 - Overview) */}
+            {/* ========================================================= */}
+            {tab === 'DASHBOARD' && (
+              <div className="space-y-6">
+                <div className="bg-white/90 backdrop-blur-md rounded-3xl p-6 sm:p-8 border border-[#BFEBDD]/70 shadow-sm">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-[#BFEBDD]/50">
+                    <div>
+                      <span className="inline-block px-3 py-1 rounded-full text-[11px] font-extrabold bg-[#DFF3E8] text-[#073653] uppercase tracking-wider mb-2">
+                        Canteen Operations Overview
+                      </span>
+                      <h2 className="text-2xl font-black text-[#073653] tracking-tight">{canteenDisplayName} Dashboard</h2>
+                      <p className="text-xs text-[#64839A] font-medium mt-1">
+                        Real-time operations summary for today's orders, prep batches, and menu availability.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setTab('MENU')}
+                        className="px-4 py-2.5 rounded-xl bg-[#00B894] hover:bg-[#00a382] text-white text-xs font-black shadow-sm transition flex items-center gap-2 min-h-[42px]"
+                      >
+                        <Utensils className="w-4 h-4" />
+                        <span>Manage Menu</span>
+                      </button>
+                      <button
+                        onClick={() => setTab('ORDERS')}
+                        className="px-4 py-2.5 rounded-xl bg-[#073653] hover:bg-[#073653]/90 text-white text-xs font-black shadow-sm transition flex items-center gap-2 min-h-[42px]"
+                      >
+                        <ShoppingBag className="w-4 h-4" />
+                        <span>View Orders</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Quick Stats Grid */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
+                    <div
+                      onClick={() => setTab('ORDERS')}
+                      className="bg-[#FFFDF9] p-4.5 rounded-2xl border border-[#F2ECE4] shadow-sm hover:shadow-md transition cursor-pointer"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-[#64839A]">Incoming Orders</span>
+                        <span className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold">
+                          <ShoppingBag className="w-4 h-4" />
+                        </span>
+                      </div>
+                      <p className="text-2xl font-black text-[#073653] mt-2">{incomingRequestedOrders.length}</p>
+                      <p className="text-[11px] text-[#64839A] mt-1">Awaiting kitchen review</p>
+                    </div>
+
+                    <div
+                      onClick={() => setTab('PREPARATION')}
+                      className="bg-[#FFFDF9] p-4.5 rounded-2xl border border-[#F2ECE4] shadow-sm hover:shadow-md transition cursor-pointer"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-[#64839A]">In Preparation</span>
+                        <span className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
+                          <ChefHat className="w-4 h-4" />
+                        </span>
+                      </div>
+                      <p className="text-2xl font-black text-[#073653] mt-2">{batchOrdersMap.length}</p>
+                      <p className="text-[11px] text-[#64839A] mt-1">Active prep batches</p>
+                    </div>
+
+                    <div
+                      onClick={() => setTab('PICKUP')}
+                      className="bg-[#FFFDF9] p-4.5 rounded-2xl border border-[#F2ECE4] shadow-sm hover:shadow-md transition cursor-pointer"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-[#64839A]">Ready for Pickup</span>
+                        <span className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold">
+                          <QrCode className="w-4 h-4" />
+                        </span>
+                      </div>
+                      <p className="text-2xl font-black text-[#073653] mt-2">{readyOrders.length}</p>
+                      <p className="text-[11px] text-[#64839A] mt-1">Awaiting customer collection</p>
+                    </div>
+
+                    <div
+                      onClick={() => setTab('MENU')}
+                      className="bg-[#FFFDF9] p-4.5 rounded-2xl border border-[#F2ECE4] shadow-sm hover:shadow-md transition cursor-pointer"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-[#64839A]">Active Menu Items</span>
+                        <span className="w-8 h-8 rounded-xl bg-[#DFF3E8] text-[#00B894] flex items-center justify-center font-bold">
+                          <Utensils className="w-4 h-4" />
+                        </span>
+                      </div>
+                      <p className="text-2xl font-black text-[#073653] mt-2">{activeMenuItems.length}</p>
+                      <p className="text-[11px] text-[#64839A] mt-1">{todaysMenuItems.length} in Today's Menu</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* ========================================================= */}
             {/* 1. ORDERS SECTION (Uncluttered List View & Card View) */}
             {/* ========================================================= */}
@@ -2756,8 +2918,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                     )}
                   </div>
                 ) : (
-                  /* Responsive Compact Grid (Reference Image 1) */
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 2xl:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4.5 items-stretch">
                     {filteredMenuItems.map(item => {
                       const isAvailUpdating = actionLoading[item.id] === 'UPDATING_AVAIL';
                       const isTodayUpdating = actionLoading[item.id] === 'UPDATING_TODAY';
@@ -2768,50 +2929,52 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                       return (
                         <div
                           key={item.id}
-                          className={`bg-white/95 backdrop-blur-md rounded-3xl p-4.5 border border-[#BFEBDD]/70 shadow-sm hover:shadow-md transition-all duration-200 flex flex-col justify-between ${
+                          className={`bg-[#FFFDF9] rounded-[24px] p-4.5 sm:p-5 border border-[#F2ECE4] shadow-[0_4px_16px_rgba(7,54,83,0.04)] hover:shadow-[0_8px_24px_rgba(7,54,83,0.08)] transition-all duration-200 flex flex-col justify-between h-full ${
                             item.isArchived
-                              ? 'opacity-80 border-slate-200 bg-slate-50/70'
+                              ? 'opacity-80 border-slate-200 bg-slate-50/80'
                               : !item.isAvailable
-                              ? 'opacity-85 border-[#BFEBDD]/50'
+                              ? 'opacity-90'
                               : ''
                           }`}
                         >
                           <div>
                             {/* Card Top: Category Dot & Label + Price */}
-                            <div className="flex items-center justify-between gap-2 pb-2">
+                            <div className="flex items-center justify-between gap-2 pb-2 h-6">
                               <div className="flex items-center gap-1.5 overflow-hidden">
-                                <span className={`w-2 h-2 rounded-full shrink-0 ${
+                                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${
                                   item.isVegetarian ? 'bg-[#00B894]' : 'bg-rose-500'
                                 }`} />
-                                <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#64839A] truncate">
+                                <span className="text-[11px] font-bold uppercase tracking-wider text-[#64839A] truncate">
                                   {catName}
                                 </span>
                               </div>
-                              <span className="font-mono text-sm font-black text-[#006699] shrink-0">
+                              <span className="font-extrabold text-[15px] tracking-tight text-[#0284C7] shrink-0">
                                 {item.price !== null ? `₹${parseFloat(item.price).toFixed(2)}` : 'Price not fixed'}
                               </span>
                             </div>
 
                             {/* Card Body: Info on Left, Dish Photography on Right */}
-                            <div className="flex items-start justify-between gap-3 mt-1">
-                              <div className="flex-1 min-w-0 pr-1">
-                                <h3 className="text-base font-extrabold text-[#073653] leading-snug tracking-tight truncate">
-                                  {item.name}
-                                </h3>
-                                <p className="text-[11px] text-[#64839A] font-medium mt-1">
-                                  Daily Order Limit: <span className="font-bold text-[#073653]">{item.dailyCapacity || 50}</span>
-                                </p>
+                            <div className="flex items-center justify-between gap-3 my-auto py-2">
+                              <div className="flex-1 min-w-0 pr-1 flex flex-col justify-between">
+                                <div>
+                                  <h3 className="text-[17px] font-black text-[#073653] leading-tight tracking-tight truncate" title={item.name}>
+                                    {item.name}
+                                  </h3>
+                                  <p className="text-xs text-[#8BA3B5] font-medium mt-1">
+                                    Daily Order Limit: {item.dailyCapacity || 50}
+                                  </p>
+                                </div>
 
-                                {/* Stock Label & Toggle Switch */}
-                                <div className="mt-3">
+                                {/* Stock Status & Toggle */}
+                                <div className="mt-3.5">
                                   <span className={`text-xs font-bold block mb-1 ${
                                     item.isAvailable ? 'text-[#073653]' : 'text-slate-400'
                                   }`}>
                                     {item.isAvailable ? 'In Stock' : 'Sold Out'}
                                   </span>
 
-                                  {/* Availability Toggle Switch */}
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex flex-col items-start gap-1">
+                                    {/* Availability Toggle Switch */}
                                     <button
                                       type="button"
                                       disabled={item.isArchived || isAvailUpdating || item.price === null}
@@ -2824,71 +2987,66 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                       <span className="w-5 h-5 rounded-full bg-white shadow-sm block transition-transform" />
                                     </button>
 
-                                    {/* Active Today's Menu Badge */}
-                                    <button
-                                      type="button"
-                                      disabled={item.isArchived || isTodayUpdating}
-                                      onClick={() => handleToggleItemToday(item.id, item.isTodaysMenu)}
-                                      title="Toggle inclusion in Today's Menu"
-                                      className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider transition ${
-                                        item.isTodaysMenu
-                                          ? 'bg-[#DFF3E8] text-[#00B894] hover:bg-[#BFEBDD]'
-                                          : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+                                    {/* Active Badge */}
+                                    <span
+                                      className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
+                                        item.isAvailable
+                                          ? 'bg-[#DFF7F2] text-[#009E7E]'
+                                          : 'bg-slate-100 text-slate-400'
                                       }`}
                                     >
-                                      {item.isTodaysMenu ? 'ACTIVE' : 'OFF'}
-                                    </button>
+                                      {item.isAvailable ? 'ACTIVE' : 'OFF'}
+                                    </span>
                                   </div>
                                 </div>
                               </div>
 
-                              {/* Dish Photography with quick action button */}
-                              <div className="relative w-20 h-20 sm:w-22 sm:h-22 shrink-0 flex items-center justify-center">
-                                <div className="w-full h-full rounded-2xl overflow-hidden bg-white shadow-sm border border-slate-100">
-                                  <img
-                                    src={getItemImage(item)}
-                                    alt={item.name}
-                                    className="w-full h-full object-cover"
-                                    onError={(e) => {
-                                      // Fallback on broken custom image link
-                                      (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80';
-                                    }}
-                                  />
-                                </div>
+                              {/* Food Image */}
+                              <div className="relative w-24 h-24 sm:w-28 sm:h-28 shrink-0 flex items-center justify-center">
+                                <img
+                                  src={getItemImage(item)}
+                                  alt={item.name}
+                                  className="w-full h-full object-contain drop-shadow-md rounded-2xl"
+                                  onError={(e) => {
+                                    (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80';
+                                  }}
+                                />
                                 <button
                                   type="button"
                                   onClick={() => openEditItemModal(item)}
-                                  title="Quick edit item"
-                                  className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-white border border-[#BFEBDD] text-[#073653] shadow-sm flex items-center justify-center hover:bg-[#DFF3E8] transition"
+                                  title="Edit item details"
+                                  className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-white shadow-md border border-slate-100 text-[#073653] flex items-center justify-center hover:scale-105 hover:bg-[#F0FDF4] transition cursor-pointer"
                                 >
-                                  <Plus className="w-3.5 h-3.5 text-[#00B894]" />
+                                  <Plus className="w-3.5 h-3.5 text-[#073653]" />
                                 </button>
                               </div>
                             </div>
                           </div>
 
-                          {/* Footer Actions: Edit / Archive or Restore */}
-                          <div className="mt-4 pt-2.5 border-t border-[#BFEBDD]/50 flex items-center justify-between text-xs">
+                          {/* Card Footer: Peach/Cream Action Bar */}
+                          <div className="mt-3 bg-[#FFF7F0] border border-[#FDE8D7] rounded-xl px-3 py-1.5 flex items-center justify-around gap-2">
                             <button
                               type="button"
                               onClick={() => openEditItemModal(item)}
-                              className="font-bold text-[#073653] hover:text-[#00B894] transition flex items-center gap-1.5 py-1"
+                              className="font-bold text-xs text-[#073653] hover:text-[#00B894] transition flex items-center gap-1.5 py-0.5 cursor-pointer"
                             >
-                              <Edit className="w-3.5 h-3.5 text-[#64839A]" />
+                              <Edit className="w-3.5 h-3.5 text-[#073653]" />
                               <span>Edit</span>
                             </button>
+
+                            <div className="w-[1px] h-3.5 bg-[#FDE8D7]" />
 
                             {item.isArchived ? (
                               <button
                                 type="button"
                                 disabled={isRestoring}
                                 onClick={() => setConfirmRestoreItem(item)}
-                                className="font-bold text-[#00B894] hover:bg-[#DFF3E8] px-2.5 py-1 rounded-lg transition flex items-center gap-1"
+                                className="font-bold text-xs text-[#00B894] hover:text-[#00a382] transition flex items-center gap-1.5 py-0.5 cursor-pointer"
                               >
                                 {isRestoring ? (
                                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                 ) : (
-                                  <RotateCcw className="w-3.5 h-3.5" />
+                                  <RotateCcw className="w-3.5 h-3.5 text-[#00B894]" />
                                 )}
                                 <span>Restore</span>
                               </button>
@@ -2897,12 +3055,12 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                 type="button"
                                 disabled={isArchiving}
                                 onClick={() => setConfirmArchiveItem(item)}
-                                className="font-bold text-rose-500 hover:text-rose-700 hover:bg-rose-50 px-2 py-1 rounded-lg transition flex items-center gap-1"
+                                className="font-bold text-xs text-[#E53935] hover:text-[#c62828] transition flex items-center gap-1.5 py-0.5 cursor-pointer"
                               >
                                 {isArchiving ? (
                                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                 ) : (
-                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <Trash2 className="w-3.5 h-3.5 text-[#E53935]" />
                                 )}
                                 <span>Archive</span>
                               </button>
