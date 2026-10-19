@@ -3023,21 +3023,23 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                 </div>
                               </div>
 
-                              {/* Food Image: Consistent square container with slightly rounded corners on clean white bg (Requirement 2) */}
-                              <div className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-2xl bg-white border border-[#F2ECE4] shadow-sm shrink-0 flex items-center justify-center overflow-hidden p-1.5">
-                                <img
-                                  src={getItemImage(item)}
-                                  alt={item.name}
-                                  className="w-full h-full object-contain"
-                                  onError={(e) => {
-                                    (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80';
-                                  }}
-                                />
+                              {/* Food Image: Consistent square container with anchored Plus button (outside overflow-hidden) */}
+                              <div className="relative shrink-0">
+                                <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl bg-white border border-[#F2ECE4] shadow-sm flex items-center justify-center overflow-hidden p-1.5">
+                                  <img
+                                    src={getItemImage(item)}
+                                    alt={item.name}
+                                    className="w-full h-full object-contain"
+                                    onError={(e) => {
+                                      (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80';
+                                    }}
+                                  />
+                                </div>
                                 <button
                                   type="button"
                                   onClick={() => openEditItemModal(item)}
                                   title="Edit item details"
-                                  className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-white shadow-md border border-slate-100 text-[#073653] flex items-center justify-center hover:scale-105 hover:bg-[#F0FDF4] transition cursor-pointer"
+                                  className="absolute -top-2.5 right-0 z-10 w-6 h-6 rounded-full bg-white shadow-md border border-slate-100 text-[#073653] flex items-center justify-center hover:scale-105 hover:bg-[#F0FDF4] transition cursor-pointer"
                                 >
                                   <Plus className="w-3.5 h-3.5 text-[#073653]" />
                                 </button>
