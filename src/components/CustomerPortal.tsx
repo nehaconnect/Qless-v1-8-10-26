@@ -1133,9 +1133,9 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
             {/* SKELETON LOADING STATE */}
             {isLoadingMenu && menuItems.length === 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 animate-pulse">
-                {[...Array(6)].map((_, i) => (
-                  <div key={i} className="bg-white/90 rounded-3xl border border-[#BFEBDD]/60 p-6 h-56 space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 animate-pulse">
+                {[...Array(8)].map((_, i) => (
+                  <div key={i} className="bg-white/90 rounded-[24px] border border-[#F2ECE4] p-5 h-56 space-y-4">
                     <div className="h-4 bg-slate-200 rounded w-1/3" />
                     <div className="h-6 bg-slate-200 rounded w-2/3" />
                     <div className="h-20 bg-slate-100 rounded-2xl w-full" />
@@ -1150,9 +1150,9 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
               </div>
             ) : viewMode === 'GRID' ? (
               /* ========================================================= */
-              /* 6. GRID VIEW MATCHING REFERENCE 1 */
+              /* 6. GRID VIEW MATCHING REFERENCE 1 (Strictly 4 Columns Max) */
               /* ========================================================= */
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 items-stretch">
                 {filteredItems.map(item => {
                   const inCart = cart.find(ci => ci.item.id === item.id);
                   const isPriceNotFixed = item.price === null || item.price === undefined;
@@ -1163,73 +1163,135 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                   return (
                     <div
                       key={item.id}
-                      className="bg-white/95 rounded-3xl border border-[#BFEBDD]/60 p-5 shadow-card hover:shadow-md transition-all flex flex-col justify-between relative group"
+                      className="bg-[#FFFDF9] rounded-[24px] p-4.5 sm:p-5 border border-[#F2ECE4] shadow-[0_4px_16px_rgba(7,54,83,0.04)] hover:shadow-[0_8px_24px_rgba(7,54,83,0.08)] transition-all flex flex-col justify-between h-full relative group"
                     >
-                      {/* Top Header Row of Card */}
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[#00B894]">
-                          <span className="w-2 h-2 rounded-full bg-[#00B894]" />
-                          <span>{catName}</span>
-                        </span>
-                        <button
-                          onClick={() => toggleFavorite(item.id)}
-                          className="p-1 text-slate-300 hover:text-rose-500 transition"
-                          aria-label="Add to favorites"
-                        >
-                          <Heart className={`w-4 h-4 ${isFav ? 'fill-rose-500 text-rose-500' : ''}`} />
-                        </button>
-                      </div>
-
-                      {/* Item Details & Dish Image Row */}
-                      <div className="flex items-start justify-between gap-3 my-2">
-                        <div className="flex-1">
-                          <h3 className="font-extrabold text-base text-[#073653] leading-snug">{item.name}</h3>
-                          {item.dailyCapacity && (
-                            <p className="text-[11px] text-[#64839A] font-medium mt-1">
-                              Daily Order Limit: {item.dailyCapacity}
-                            </p>
-                          )}
-                          {item.description && (
-                            <p className="text-xs text-[#64839A] line-clamp-2 mt-1.5 leading-relaxed">
-                              {item.description}
-                            </p>
-                          )}
+                      <div>
+                        {/* Top Header Row of Card */}
+                        <div className="flex items-center justify-between gap-2 pb-2 h-6">
+                          <div className="flex items-center gap-1.5 overflow-hidden">
+                            <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                              item.isVegetarian ? 'bg-[#00B894]' : 'bg-rose-500'
+                            }`} />
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-[#64839A] truncate">
+                              {catName}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-extrabold text-[15px] tracking-tight text-[#0284C7] shrink-0">
+                              {isPriceNotFixed ? 'Price not fixed' : `₹${parseFloat(item.price as string).toFixed(2)}`}
+                            </span>
+                            <button
+                              onClick={() => toggleFavorite(item.id)}
+                              className="p-1 text-slate-300 hover:text-rose-500 transition cursor-pointer"
+                              aria-label="Add to favorites"
+                            >
+                              <Heart className={`w-4 h-4 ${isFav ? 'fill-rose-500 text-rose-500' : ''}`} />
+                            </button>
+                          </div>
                         </div>
 
-                        {/* Dish Visual Thumbnail */}
-                        <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden shrink-0 shadow-sm border border-slate-100 bg-amber-50/40">
-                          <img
-                            src={dishImage}
-                            alt={item.name}
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                            loading="lazy"
-                          />
+                        {/* Item Details & Dish Image Row */}
+                        <div className="flex items-center justify-between gap-3 my-auto py-2">
+                          <div className="flex-1 min-w-0 pr-1 flex flex-col justify-between">
+                            <div>
+                              <h3 className="text-[17px] font-black text-[#073653] leading-tight tracking-tight truncate" title={item.name}>
+                                {item.name}
+                              </h3>
+                              {item.dailyCapacity && (
+                                <p className="text-xs text-[#8BA3B5] font-medium mt-1">
+                                  Daily Order Limit: {item.dailyCapacity}
+                                </p>
+                              )}
+                              {item.description && (
+                                <p className="text-xs text-[#64839A] line-clamp-2 mt-1 leading-relaxed">
+                                  {item.description}
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="mt-3.5">
+                              <span className={`text-xs font-bold block mb-1 ${
+                                item.isAvailable && !isPriceNotFixed ? 'text-[#073653]' : 'text-slate-400'
+                              }`}>
+                                {isPriceNotFixed ? 'Unavailable' : item.isAvailable ? 'In Stock' : 'Sold Out'}
+                              </span>
+                              <span
+                                className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider inline-block ${
+                                  item.isAvailable && !isPriceNotFixed
+                                    ? 'bg-[#DFF7F2] text-[#009E7E]'
+                                    : 'bg-slate-100 text-slate-400'
+                                }`}
+                              >
+                                {item.isAvailable && !isPriceNotFixed ? 'AVAILABLE' : 'OFF'}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Consistent square image container with slightly rounded corners on clean white bg (Requirement 2) */}
+                          <div className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-2xl bg-white border border-[#F2ECE4] shadow-sm shrink-0 flex items-center justify-center overflow-hidden p-1.5">
+                            <img
+                              src={dishImage}
+                              alt={item.name}
+                              className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
+                              loading="lazy"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80';
+                              }}
+                            />
+                            {item.isAvailable && !isPriceNotFixed && (
+                              <button
+                                onClick={() => addToCart(item)}
+                                disabled={canteenStatus !== 'OPEN'}
+                                title="Add to cart"
+                                className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-white shadow-md border border-slate-100 text-[#073653] flex items-center justify-center hover:scale-105 hover:bg-[#F0FDF4] transition disabled:opacity-40 cursor-pointer"
+                              >
+                                <Plus className="w-3.5 h-3.5 text-[#073653]" />
+                              </button>
+                            )}
+                          </div>
                         </div>
                       </div>
 
-                      {/* Card Bottom Row: Price & + Add Button */}
-                      <div className="pt-3 border-t border-[#BFEBDD]/40 flex items-center justify-between mt-auto">
+                      {/* Card Bottom Row: Peach/Cream Action Bar */}
+                      <div className="mt-3 bg-[#FFF7F0] border border-[#FDE8D7] rounded-xl px-3 py-1.5 flex items-center justify-between gap-2">
                         {isPriceNotFixed ? (
                           <span className="text-xs font-bold text-[#64839A] italic">Price not fixed</span>
                         ) : (
-                          <span className="text-base sm:text-lg font-black text-[#073653]">
-                            ₹{item.price}
+                          <span className="text-sm font-extrabold text-[#073653]">
+                            ₹{parseFloat(item.price as string).toFixed(2)}
                           </span>
                         )}
 
                         {isPriceNotFixed ? (
-                          <span className="text-[10px] font-extrabold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full">
+                          <span className="text-[10px] font-extrabold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg">
                             Unavailable
                           </span>
                         ) : !item.isAvailable ? (
-                          <span className="text-[10px] font-extrabold text-rose-600 bg-rose-50 px-3 py-1.5 rounded-full border border-rose-200/60">
+                          <span className="text-[10px] font-extrabold text-rose-600 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200/60">
                             Sold Out
                           </span>
+                        ) : inCart ? (
+                          <div className="flex items-center gap-1.5 bg-white rounded-lg p-0.5 border border-[#BFEBDD]">
+                            <button
+                              onClick={() => updateCartQuantity(item.id, inCart.quantity - 1)}
+                              className="w-6 h-6 rounded-md bg-[#DFF3E8] text-[#073653] font-bold flex items-center justify-center hover:bg-[#BFEBDD] transition text-xs"
+                            >
+                              -
+                            </button>
+                            <span className="px-1.5 font-mono text-xs font-black text-[#073653]">{inCart.quantity}</span>
+                            <button
+                              onClick={() => updateCartQuantity(item.id, inCart.quantity + 1)}
+                              disabled={canteenStatus !== 'OPEN'}
+                              className="w-6 h-6 rounded-md bg-[#00B894] text-white font-bold flex items-center justify-center hover:bg-[#00a382] transition text-xs disabled:opacity-40"
+                            >
+                              +
+                            </button>
+                          </div>
                         ) : (
                           <button
                             onClick={() => addToCart(item)}
                             disabled={canteenStatus !== 'OPEN'}
-                            className="px-5 py-2 rounded-full bg-[#0B725C] hover:bg-[#095E4B] text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="px-4 py-1.5 rounded-lg bg-[#00B894] hover:bg-[#00a382] text-white text-xs font-bold flex items-center gap-1 shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                           >
                             <Plus className="w-3.5 h-3.5" />
                             <span>Add</span>

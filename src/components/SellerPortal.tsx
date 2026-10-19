@@ -49,6 +49,7 @@ import {
   ChevronRight,
   Home,
   Settings,
+  Crop,
 } from 'lucide-react';
 import { QLessLogo } from './QLessLogo';
 
@@ -294,10 +295,14 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   const [formImage, setFormImage] = useState('');
   const [formOrderLimit, setFormOrderLimit] = useState('50');
 
-  // Image Upload State
+  // Image Upload & Crop State
   const [imageInputMode, setImageInputMode] = useState<'UPLOAD' | 'URL'>('UPLOAD');
   const [imageUploadLoading, setImageUploadLoading] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
+  const [cropModalSrc, setCropModalSrc] = useState<string | null>(null);
+  const [cropScale, setCropScale] = useState(1);
+  const [cropPanX, setCropPanX] = useState(0);
+  const [cropPanY, setCropPanY] = useState(0);
 
   // Form State for Category
   const [newCatName, setNewCatName] = useState('');
@@ -922,51 +927,68 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
     setImageUploadLoading(true);
     const reader = new FileReader();
     reader.onload = (event) => {
-      const img = new Image();
-      img.onload = () => {
-        try {
-          const maxDim = 600;
-          let width = img.width;
-          let height = img.height;
-          if (width > maxDim || height > maxDim) {
-            if (width > height) {
-              height = Math.round((height * maxDim) / width);
-              width = maxDim;
-            } else {
-              width = Math.round((width * maxDim) / height);
-              height = maxDim;
-            }
-          }
-
-          const canvas = document.createElement('canvas');
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(img, 0, 0, width, height);
-            const dataUrl = canvas.toDataURL('image/webp', 0.85);
-            setFormImage(dataUrl);
-          } else {
-            setFormImage(event.target?.result as string);
-          }
-          setImageError(null);
-        } catch {
-          setImageError('Error processing image. Please try a different photo.');
-        } finally {
-          setImageUploadLoading(false);
-        }
-      };
-      img.onerror = () => {
-        setImageError('Invalid image file.');
-        setImageUploadLoading(false);
-      };
-      img.src = event.target?.result as string;
+      const dataUrl = event.target?.result as string;
+      setCropModalSrc(dataUrl);
+      setCropScale(1);
+      setCropPanX(0);
+      setCropPanY(0);
+      setImageUploadLoading(false);
     };
     reader.onerror = () => {
       setImageError('Failed to read file from your device.');
       setImageUploadLoading(false);
     };
     reader.readAsDataURL(file);
+  };
+
+  // Canvas-based square image cropping handler (600x600 px with clean white canvas)
+  const handleApplyCrop = () => {
+    if (!cropModalSrc) return;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 600;
+        canvas.height = 600;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        // Clean white background
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, 600, 600);
+
+        // Aspect fit base dimensions
+        const ratio = Math.min(600 / img.width, 600 / img.height);
+        const baseW = img.width * ratio;
+        const baseH = img.height * ratio;
+
+        const scaledW = baseW * cropScale;
+        const scaledH = baseH * cropScale;
+
+        // Apply pan offset (canvas 600px vs 256px preview = ~2.34x)
+        const panFactor = 600 / 256;
+        const drawX = (600 - scaledW) / 2 + (cropPanX * panFactor);
+        const drawY = (600 - scaledH) / 2 + (cropPanY * panFactor);
+
+        ctx.drawImage(img, drawX, drawY, scaledW, scaledH);
+
+        const dataUrl = canvas.toDataURL('image/webp', 0.9);
+        setFormImage(dataUrl);
+        setCropModalSrc(null);
+        setCropScale(1);
+        setCropPanX(0);
+        setCropPanY(0);
+      } catch {
+        setFormImage(cropModalSrc);
+        setCropModalSrc(null);
+      }
+    };
+    img.onerror = () => {
+      setImageError('Failed to load image for cropping.');
+      setCropModalSrc(null);
+    };
+    img.src = cropModalSrc;
   };
 
   // Helper to resolve dish photography (prefers custom image -> fallback to curated dish photo -> default)
@@ -2918,7 +2940,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                     )}
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4.5 items-stretch">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 items-stretch">
                     {filteredMenuItems.map(item => {
                       const isAvailUpdating = actionLoading[item.id] === 'UPDATING_AVAIL';
                       const isTodayUpdating = actionLoading[item.id] === 'UPDATING_TODAY';
@@ -3001,12 +3023,12 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                 </div>
                               </div>
 
-                              {/* Food Image */}
-                              <div className="relative w-24 h-24 sm:w-28 sm:h-28 shrink-0 flex items-center justify-center">
+                              {/* Food Image: Consistent square container with slightly rounded corners on clean white bg (Requirement 2) */}
+                              <div className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-2xl bg-white border border-[#F2ECE4] shadow-sm shrink-0 flex items-center justify-center overflow-hidden p-1.5">
                                 <img
                                   src={getItemImage(item)}
                                   alt={item.name}
-                                  className="w-full h-full object-contain drop-shadow-md rounded-2xl"
+                                  className="w-full h-full object-contain"
                                   onError={(e) => {
                                     (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80';
                                   }}
@@ -3557,6 +3579,19 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                     </div>
                     <button
                       type="button"
+                      onClick={() => {
+                        setCropModalSrc(formImage);
+                        setCropScale(1);
+                        setCropPanX(0);
+                        setCropPanY(0);
+                      }}
+                      className="px-2.5 py-1 text-xs font-bold text-[#00B894] hover:bg-[#DFF3E8] rounded-lg transition flex items-center gap-1 cursor-pointer"
+                    >
+                      <Crop className="w-3 h-3" />
+                      <span>Crop</span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => setFormImage('')}
                       className="px-2.5 py-1 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-lg transition"
                     >
@@ -3652,6 +3687,127 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL: SQUARE IMAGE CROP & FORMAT (Requirement 2) */}
+      {/* ========================================================= */}
+      {cropModalSrc && (
+        <div
+          className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in"
+          onClick={(e) => { if (e.target === e.currentTarget) setCropModalSrc(null); }}
+          onKeyDown={(e) => { if (e.key === 'Escape') setCropModalSrc(null); }}
+          tabIndex={0}
+        >
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full border border-[#BFEBDD] shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+              <div>
+                <h3 className="text-sm font-extrabold text-[#073653]">Crop & Square Format Food Photo</h3>
+                <p className="text-[11px] text-[#64839A]">Standardise image into a clean square with pure white canvas.</p>
+              </div>
+              <button
+                onClick={() => setCropModalSrc(null)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Square Viewport */}
+            <div className="w-64 h-64 mx-auto rounded-2xl bg-white border-2 border-dashed border-[#00B894] overflow-hidden relative shadow-inner flex items-center justify-center p-2">
+              <img
+                src={cropModalSrc}
+                alt="Crop target"
+                style={{
+                  transform: `translate(${cropPanX}px, ${cropPanY}px) scale(${cropScale})`,
+                  transformOrigin: 'center center',
+                }}
+                className="max-w-full max-h-full object-contain transition-transform duration-75 pointer-events-none select-none"
+              />
+            </div>
+
+            {/* Zoom and Pan Controls */}
+            <div className="space-y-2 pt-1 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-[#073653]">Zoom Level: {Math.round(cropScale * 100)}%</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => { setCropScale(1); setCropPanX(0); setCropPanY(0); }}
+                    className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-[#073653] hover:bg-slate-200"
+                  >
+                    Fit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setCropScale(1.35); setCropPanX(0); setCropPanY(0); }}
+                    className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-[#073653] hover:bg-slate-200"
+                  >
+                    Fill
+                  </button>
+                </div>
+              </div>
+              <input
+                type="range"
+                min="0.8"
+                max="2.5"
+                step="0.05"
+                value={cropScale}
+                onChange={(e) => setCropScale(parseFloat(e.target.value))}
+                className="w-full accent-[#00B894] cursor-pointer"
+              />
+
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <div>
+                  <span className="text-[10px] text-[#64839A] font-bold block mb-0.5">Horizontal Pan</span>
+                  <input
+                    type="range"
+                    min="-120"
+                    max="120"
+                    step="5"
+                    value={cropPanX}
+                    onChange={(e) => setCropPanX(parseInt(e.target.value, 10))}
+                    className="w-full accent-[#00B894] cursor-pointer"
+                  />
+                </div>
+                <div>
+                  <span className="text-[10px] text-[#64839A] font-bold block mb-0.5">Vertical Pan</span>
+                  <input
+                    type="range"
+                    min="-120"
+                    max="120"
+                    step="5"
+                    value={cropPanY}
+                    onChange={(e) => setCropPanY(parseInt(e.target.value, 10))}
+                    className="w-full accent-[#00B894] cursor-pointer"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setFormImage(cropModalSrc);
+                  setCropModalSrc(null);
+                }}
+                className="px-3.5 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
+              >
+                Skip Crop
+              </button>
+              <button
+                type="button"
+                onClick={handleApplyCrop}
+                className="px-4 py-2 rounded-xl text-xs font-black bg-[#00B894] hover:bg-[#00a382] text-white shadow-sm flex items-center gap-1.5 cursor-pointer"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>Apply Square Crop</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
