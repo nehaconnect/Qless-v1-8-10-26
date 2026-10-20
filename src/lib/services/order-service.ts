@@ -6,6 +6,7 @@ import {
   getISTTodayString,
   toCanonicalPickupTime,
   validatePickupTimeCanonical,
+  validateFuturePickupTimeCanonical,
   formatPickupTimeDisplay,
   formatCanonicalTo12Hour,
   calculate15MinBatch,
@@ -18,6 +19,7 @@ export {
   getISTTodayString,
   toCanonicalPickupTime,
   validatePickupTimeCanonical,
+  validateFuturePickupTimeCanonical,
   formatPickupTimeDisplay,
   formatCanonicalTo12Hour,
   calculate15MinBatch,
@@ -262,10 +264,10 @@ export async function createOrder(input: CreateOrderInput) {
     return { order: existingOrder, alreadyCreated: true };
   }
 
-  // 1. Authoritative canonical validation of requested pickup time
-  const timeValidation = validatePickupTimeCanonical(exactPickupTime);
+  // 1. Authoritative canonical validation of requested pickup time & non-past slot
+  const timeValidation = validateFuturePickupTimeCanonical(exactPickupTime, simulatedNow || new Date());
   if (!timeValidation.valid || !timeValidation.canonical) {
-    throw new Error(timeValidation.error || 'Requested pickup time must be within canteen operating hours (8:00 AM to 5:00 PM)');
+    throw new Error(timeValidation.error || 'Requested pickup time must be within canteen operating hours (8:00 AM to 5:00 PM) and cannot be in the past');
   }
 
   // Exact local IST timestamp

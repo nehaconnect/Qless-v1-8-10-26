@@ -36,12 +36,21 @@ import {
   ChevronDown,
   ChevronRight,
   Utensils,
-  ExternalLink
+  ExternalLink,
+  RotateCcw,
+  Receipt,
+  CalendarCheck
 } from 'lucide-react';
 import {
   validatePickupTimeCanonical,
+  validateFuturePickupTimeCanonical,
+  isPastPickupSlot,
+  getAllDayPickupSlots,
+  PickupSlotOption,
   calculate15MinBatch,
   formatPickupTimeDisplay,
+  formatCanonicalTo12Hour,
+  getISTDateParts,
 } from '@/lib/pickup-time';
 import { QLessLogo } from '@/components/QLessLogo';
 
@@ -57,6 +66,7 @@ interface MenuItem {
   imageUrl?: string | null;
   dailyCapacity?: number | null;
   currentStock?: number | null;
+  isArchived?: boolean;
 }
 
 interface MenuCategory {
@@ -72,6 +82,7 @@ interface CartItem {
 
 interface OrderItem {
   id: string;
+  menuItemId?: string;
   itemName: string;
   unitPrice: string;
   quantity: number;
@@ -87,12 +98,16 @@ interface Order {
   sellerSuggestedTime: string | null;
   timeNegotiationStatus: string;
   paymentStatus: string;
+  paymentMethod?: string;
+  canteenName?: string;
+  canteenLocation?: string;
   rejectionReason?: string | null;
   rejectionNote?: string | null;
   pickupCode?: string | null;
   batch: { displayLabel: string; startTime: string } | null;
   items: OrderItem[];
   createdAt: string;
+  collectedAt?: string | null;
 }
 
 interface CustomerPortalProps {
@@ -194,9 +209,18 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
   const [isLoadingMenu, setIsLoadingMenu] = useState(true);
   const [isLoadingOrders, setIsLoadingOrders] = useState(true);
 
-  // Time selection for ordering (24-hour internal HH:mm, default 11:00 AM)
-  const [selectedTimeStr, setSelectedTimeStr] = useState<string>('11:00');
-  const [calculatedBatch, setCalculatedBatch] = useState<string>('11:00 AM–11:15 AM');
+  // Time selection for ordering (24-hour internal HH:mm)
+  const [daySlots, setDaySlots] = useState<PickupSlotOption[]>(() => getAllDayPickupSlots());
+  const [selectedTimeStr, setSelectedTimeStr] = useState<string>(() => {
+    const slots = getAllDayPickupSlots();
+    const firstAvailable = slots.find(s => !s.isPast);
+    return firstAvailable ? firstAvailable.canonical : '08:00';
+  });
+  const [calculatedBatch, setCalculatedBatch] = useState<string>(() => {
+    const slots = getAllDayPickupSlots();
+    const firstAvailable = slots.find(s => !s.isPast);
+    return firstAvailable ? firstAvailable.batchLabel : '8:00 AM–8:15 AM';
+  });
   const [timeValidationError, setTimeValidationError] = useState<string | null>(null);
 
   // Customer orders & counter-time picker modal
@@ -309,16 +333,48 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
     return () => clearInterval(interval);
   }, [selectedCanteenId]);
 
-  // Recalculate assigned 15-min batch on pickup time change
+  // Refresh pickup slot availability periodically and whenever Cart tab is viewed
+  useEffect(() => {
+    const refreshSlots = () => {
+      const refreshed = getAllDayPickupSlots();
+      setDaySlots(refreshed);
+      // If currently selected slot is now in the past, update to next available future slot
+      if (selectedTimeStr) {
+        const check = isPastPickupSlot(selectedTimeStr);
+        if (check.isPast) {
+          const firstValid = refreshed.find(s => !s.isPast);
+          if (firstValid) {
+            setSelectedTimeStr(firstValid.canonical);
+            setCalculatedBatch(firstValid.batchLabel);
+            setTimeValidationError(null);
+          }
+        }
+      }
+    };
+
+    if (activeTab === 'CART') {
+      refreshSlots();
+    }
+
+    const timer = setInterval(refreshSlots, 30000);
+    return () => clearInterval(timer);
+  }, [activeTab, selectedTimeStr]);
+
+  // Recalculate assigned 15-min batch on pickup time change & validate future slot
   useEffect(() => {
     if (!selectedTimeStr) {
       setTimeValidationError('Pickup time is required');
       return;
     }
-    const validation = validatePickupTimeCanonical(selectedTimeStr);
+    const validation = validateFuturePickupTimeCanonical(selectedTimeStr);
     if (!validation.valid) {
       setTimeValidationError(validation.error || 'Invalid pickup time');
-      setCalculatedBatch('—');
+      if (validation.canonical) {
+        const batch = calculate15MinBatch(validation.canonical);
+        setCalculatedBatch(batch.displayLabel);
+      } else {
+        setCalculatedBatch('—');
+      }
     } else {
       setTimeValidationError(null);
       const batch = calculate15MinBatch(selectedTimeStr);
@@ -393,8 +449,9 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
   // Place Order submission
   const handlePlaceOrder = async () => {
     if (cart.length === 0) return;
-    if (timeValidationError) {
-      setErrorMsg('Please select a valid pickup time between 8:00 AM and 5:00 PM IST');
+    const validation = validateFuturePickupTimeCanonical(selectedTimeStr);
+    if (!validation.valid) {
+      setErrorMsg(validation.error || 'Please select a valid future pickup time between 8:00 AM and 5:00 PM IST');
       return;
     }
     if (canteenStatus !== 'OPEN') {
@@ -551,8 +608,94 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
     return true;
   });
 
-  const activeOrders = ordersList.filter(o => !['COLLECTED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(o.status));
-  const previousOrders = ordersList.filter(o => ['COLLECTED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(o.status));
+  // Reorder items from a past order
+  const handleReorder = (order: Order) => {
+    if (!order.items || order.items.length === 0) {
+      setErrorMsg('No items found in this order to reorder.');
+      return;
+    }
+
+    const availableToAdd: Array<{ item: MenuItem; quantity: number }> = [];
+    const unavailableNames: string[] = [];
+
+    for (const ordItem of order.items) {
+      // Find current item in menuItems (by menuItemId or case-insensitive name)
+      const currentItem = menuItems.find(
+        m => (ordItem.menuItemId && m.id === ordItem.menuItemId) || m.name.toLowerCase() === ordItem.itemName.toLowerCase()
+      );
+
+      // Must be currently available, not archived, and have a valid listed price
+      if (
+        currentItem &&
+        currentItem.isAvailable &&
+        !currentItem.isArchived &&
+        currentItem.price !== null &&
+        currentItem.price !== undefined
+      ) {
+        availableToAdd.push({
+          item: currentItem, // Uses current menu item data and CURRENT price!
+          quantity: ordItem.quantity,
+        });
+      } else {
+        unavailableNames.push(ordItem.itemName);
+      }
+    }
+
+    if (availableToAdd.length === 0) {
+      setErrorMsg(
+        `None of the items from Order #${order.orderNumber} (${unavailableNames.join(', ')}) are currently available on today's menu.`
+      );
+      return;
+    }
+
+    // Add available items to cart with their current prices
+    setCart(prev => {
+      const updated = [...prev];
+      for (const { item, quantity } of availableToAdd) {
+        const existing = updated.find(ci => ci.item.id === item.id);
+        if (existing) {
+          existing.quantity += quantity;
+        } else {
+          updated.push({ item, quantity });
+        }
+      }
+      return updated;
+    });
+
+    // Refresh day slots and ensure selected pickup slot is a valid future slot
+    const refreshedSlots = getAllDayPickupSlots();
+    setDaySlots(refreshedSlots);
+    const firstValid = refreshedSlots.find(s => !s.isPast);
+    if (firstValid && (!selectedTimeStr || isPastPickupSlot(selectedTimeStr).isPast)) {
+      setSelectedTimeStr(firstValid.canonical);
+      setCalculatedBatch(firstValid.batchLabel);
+      setTimeValidationError(null);
+    }
+
+    // Switch to Cart tab so customer can select a new available pickup slot and complete checkout
+    setActiveTab('CART');
+
+    if (unavailableNames.length > 0) {
+      setErrorMsg(
+        `Added ${availableToAdd.length} available item(s) to your cart at today's prices. Note: ${unavailableNames.join(', ')} is currently unavailable and was not added.`
+      );
+    } else {
+      setSuccessMsg(
+        `Added all items from Order #${order.orderNumber} to your cart with current prices! Please select an available pickup time slot below to proceed.`
+      );
+    }
+  };
+
+  // Active orders: all statuses except COLLECTED, CANCELLED, REJECTED, EXPIRED (sorted newest first)
+  const activeOrders = ordersList
+    .filter(o => !['COLLECTED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(o.status))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  // Previous orders: collected, cancelled, rejected, expired orders (sorted newest first)
+  const previousOrders = ordersList
+    .filter(o => ['COLLECTED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(o.status))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
   const unreadNotificationsCount = notificationsList.filter(n => !n.isRead).length;
 
   const currentCanteenName = canteensList.find(c => c.id === selectedCanteenId)?.name || 'IP Canteen';
@@ -566,6 +709,17 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
   const format12TimeIST = (val?: string | Date | null) => {
     return formatPickupTimeDisplay(val);
+  };
+
+  const formatDateTimeIST = (dateStr: string | Date) => {
+    try {
+      const d = new Date(dateStr);
+      const date = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+      const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+      return { date, time, full: `${date}, ${time} IST` };
+    } catch {
+      return { date: '—', time: '—', full: '—' };
+    }
   };
 
   return (
@@ -816,184 +970,229 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
         {/* ========================================================= */}
         {/* 4. TOP HEADER — SAME STRUCTURE & THEME */}
         {/* ========================================================= */}
-        <header className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-5">
-          {/* Left: Outlet Information Card & Status */}
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setIsMobileDrawerOpen(true)}
-              className="p-2.5 rounded-xl bg-white/80 text-[#073653] hover:bg-white md:hidden border border-[#BFEBDD]/80 flex items-center justify-center min-h-[44px] min-w-[44px]"
-              aria-label="Open navigation menu"
-            >
-              <MenuIcon className="w-5 h-5" />
-            </button>
-
-            <div className="relative">
-              <div
-                onClick={() => canteensList.length > 1 && setShowCanteenDropdown(!showCanteenDropdown)}
-                className={`bg-white/85 backdrop-blur-md rounded-2xl p-1.5 pr-4 border border-[#BFEBDD]/70 shadow-sm flex items-center gap-3 ${
-                  canteensList.length > 1 ? 'cursor-pointer hover:bg-white transition' : ''
-                }`}
-              >
-                {/* Outlet Thumbnail */}
-                <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 bg-slate-100 border border-slate-200/60">
-                  <img
-                    src={CANTEEN_THUMBNAIL_URL}
-                    alt={currentCanteenName}
-                    className="w-full h-full object-cover"
-                  />
-                </div>
-
-                {/* Outlet Context */}
-                <div className="text-left">
-                  <div className="flex items-center gap-2">
-                    <h1 className="text-sm font-extrabold text-[#073653]">{currentCanteenName}</h1>
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-[#DFF3E8] text-[#073653] border border-[#BFEBDD]/60">
-                      <span className={`w-2 h-2 rounded-full ${
-                        canteenStatus === 'OPEN' ? 'bg-[#00B894] animate-pulse' :
-                        canteenStatus === 'TOO_BUSY' ? 'bg-amber-500' : 'bg-rose-500'
-                      }`} />
-                      {canteenStatus === 'OPEN' ? 'Open' : canteenStatus === 'TOO_BUSY' ? 'Busy' : 'Closed'}
-                      {canteensList.length > 1 && <ChevronDown className="w-3 h-3 text-[#64839A]" />}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-[#64839A] font-medium flex items-center gap-1.5 mt-0.5">
-                    <span>Indraprastha College for Women · Main Canteen</span>
-                    <span className="text-[#64839A]/60">|</span>
-                    <span>Today 8:00 AM – 5:00 PM IST</span>
-                  </p>
-                </div>
-              </div>
-
-              {/* Multiple Canteens Selection Dropdown */}
-              {showCanteenDropdown && canteensList.length > 1 && (
-                <div className="absolute top-full left-0 mt-2 w-64 bg-white/95 backdrop-blur-md rounded-2xl shadow-card border border-[#BFEBDD] p-2 z-50 animate-in fade-in zoom-in-95">
-                  <p className="text-[10px] uppercase font-bold text-[#64839A] px-2 py-1">Switch Canteen</p>
-                  {canteensList.map(c => (
-                    <button
-                      key={c.id}
-                      onClick={() => handleSelectCanteen(c.id)}
-                      className={`w-full text-left px-3 py-2 rounded-xl text-xs font-bold transition flex items-center justify-between ${
-                        selectedCanteenId === c.id ? 'bg-[#DFF3E8] text-[#073653]' : 'text-slate-700 hover:bg-slate-50'
-                      }`}
-                    >
-                      <span>{c.name}</span>
-                      {selectedCanteenId === c.id && <Check className="w-4 h-4 text-[#00B894]" />}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Right Header: Search Bar + Notifications + Customer Profile */}
-          <div className="flex items-center gap-3 self-end lg:self-auto w-full lg:w-auto justify-end">
-            {/* Menu Search Field */}
-            <div className="relative flex-1 lg:w-64 max-w-xs">
-              <Search className="w-4 h-4 text-[#64839A] absolute left-3.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search menu items..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-[#64839A] focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-
-            {/* Notification Bell */}
-            <button
-              onClick={() => setActiveTab('NOTIFICATIONS')}
-              className="p-2.5 rounded-full bg-white/90 border border-[#BFEBDD]/70 text-[#073653] hover:bg-white relative transition shadow-sm min-h-[40px] min-w-[40px] flex items-center justify-center shrink-0"
-              aria-label="Notifications"
-            >
-              <Bell className="w-4 h-4 text-[#073653]" />
-              {unreadNotificationsCount > 0 && (
-                <span className="w-2.5 h-2.5 bg-[#FF5A5F] rounded-full absolute top-1.5 right-1.5 ring-2 ring-white" />
-              )}
-            </button>
-
-            {/* Customer Profile Pill */}
-            <div className="relative">
+        <header className="mb-4 sm:mb-5 space-y-2.5">
+          {/* Main Top Header Bar: Left (Menu + Outlet info) | Right (Desktop Search, Notification Bell, Profile) */}
+          <div className="flex items-center justify-between gap-2 sm:gap-3">
+            {/* Left: Menu Drawer Toggle + Outlet Information Card */}
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
               <button
-                onClick={() => setShowProfileDropdown(!showProfileDropdown)}
-                className="bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/70 pl-1.5 pr-3 py-1 rounded-full shadow-sm flex items-center gap-2.5 hover:bg-white transition cursor-pointer min-h-[40px]"
+                onClick={() => setIsMobileDrawerOpen(true)}
+                className="p-2 sm:p-2.5 rounded-xl bg-white/85 text-[#073653] hover:bg-white md:hidden border border-[#BFEBDD]/80 flex items-center justify-center min-h-[42px] min-w-[42px] shrink-0 shadow-sm"
+                aria-label="Open navigation menu"
               >
-                <div className="w-8 h-8 rounded-full bg-[#DFF3E8] text-[#073653] font-black flex items-center justify-center text-xs border border-[#BFEBDD]/60 shrink-0">
-                  {user?.name ? user.name.charAt(0).toUpperCase() : 'S'}
-                </div>
-                <div className="text-left text-xs pr-1 hidden sm:block">
-                  <p className="font-extrabold text-[#073653] leading-tight truncate max-w-[110px]">{user?.name || 'Siya Sen'}</p>
-                  <p className="text-[10px] text-[#64839A] font-medium leading-tight">Student</p>
-                </div>
-                <ChevronDown className="w-3.5 h-3.5 text-[#64839A]" />
+                <MenuIcon className="w-5 h-5" />
               </button>
 
-              {/* Profile Dropdown */}
-              {showProfileDropdown && (
-                <div className="absolute right-0 mt-2 w-64 bg-white/95 backdrop-blur-md rounded-2xl shadow-card border border-[#BFEBDD] p-3 z-50 animate-in fade-in zoom-in-95">
-                  <div className="px-2 pb-3 border-b border-[#DFF3E8]">
-                    <p className="text-xs font-black text-[#073653]">{user?.name}</p>
-                    <p className="text-[11px] font-bold text-[#64839A] mt-0.5">{user?.username || user?.email}</p>
-                    <div className="mt-2 pt-2 border-t border-[#DFF3E8] space-y-1 text-[11px] text-[#64839A]">
-                      <div className="flex justify-between items-center">
-                        <span>Role:</span>
-                        <span className="font-extrabold text-[#073653] uppercase px-2 py-0.5 bg-[#DFF3E8] rounded text-[10px]">Student</span>
+              <div className="relative min-w-0 flex-1">
+                <div
+                  onClick={() => canteensList.length > 1 && setShowCanteenDropdown(!showCanteenDropdown)}
+                  className={`bg-white/85 backdrop-blur-md rounded-2xl p-1.5 pr-2.5 sm:pr-4 border border-[#BFEBDD]/70 shadow-sm flex items-center gap-2 sm:gap-3 ${
+                    canteensList.length > 1 ? 'cursor-pointer hover:bg-white transition' : ''
+                  }`}
+                >
+                  {/* Outlet Thumbnail */}
+                  <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl overflow-hidden shrink-0 bg-slate-100 border border-slate-200/60">
+                    <img
+                      src={CANTEEN_THUMBNAIL_URL}
+                      alt={currentCanteenName}
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+
+                  {/* Outlet Context */}
+                  <div className="text-left min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 sm:gap-2">
+                      <h1 className="text-xs sm:text-sm font-extrabold text-[#073653] truncate">{currentCanteenName}</h1>
+                      <span className="inline-flex items-center gap-1 px-1.5 sm:px-2 py-0.5 rounded-full text-[10px] sm:text-[11px] font-bold bg-[#DFF3E8] text-[#073653] border border-[#BFEBDD]/60 shrink-0">
+                        <span className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${
+                          canteenStatus === 'OPEN' ? 'bg-[#00B894] animate-pulse' :
+                          canteenStatus === 'TOO_BUSY' ? 'bg-amber-500' : 'bg-rose-500'
+                        }`} />
+                        <span>{canteenStatus === 'OPEN' ? 'Open' : canteenStatus === 'TOO_BUSY' ? 'Busy' : 'Closed'}</span>
+                        {canteensList.length > 1 && <ChevronDown className="w-3 h-3 text-[#64839A]" />}
+                      </span>
+                    </div>
+                    {/* Neat aligned outlet info: 1 line on desktop, 2 clean lines on mobile */}
+                    <div className="text-[10px] sm:text-[11px] text-[#64839A] font-medium leading-tight mt-0.5">
+                      <div className="hidden sm:flex items-center gap-1.5 truncate">
+                        <span>Indraprastha College for Women · Main Canteen</span>
+                        <span className="text-[#64839A]/60">|</span>
+                        <span>Today 8:00 AM – 5:00 PM IST</span>
                       </div>
-                      <div className="flex justify-between items-center">
-                        <span>Campus:</span>
-                        <span className="font-bold text-[#073653]">IPCW (Delhi Univ.)</span>
+                      <div className="sm:hidden space-y-0.5">
+                        <p className="truncate text-[#073653]/90 font-semibold">IPCW · Main Canteen</p>
+                        <p className="text-[#0B725C] font-bold">8:00 AM – 5:00 PM IST</p>
                       </div>
                     </div>
                   </div>
-
-                  {/* Switch to Account Settings Tab */}
-                  <button
-                    onClick={() => {
-                      setShowProfileDropdown(false);
-                      setActiveTab('ACCOUNT');
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-[#073653] hover:bg-[#DFF3E8]/50 rounded-xl transition mt-1"
-                  >
-                    <User className="w-4 h-4 text-[#64839A]" />
-                    <span>Account Settings</span>
-                  </button>
-
-                  {/* Exit View-As if Admin */}
-                  {isViewAsAdmin && onSwitchViewAs && (
-                    <button
-                      onClick={() => {
-                        setShowProfileDropdown(false);
-                        onSwitchViewAs('ADMIN');
-                      }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-[#073653] bg-[#FFE0C7]/60 hover:bg-[#FFE0C7] rounded-xl transition mt-1"
-                    >
-                      <span>Exit View-As (Back to Admin)</span>
-                    </button>
-                  )}
-
-                  {/* Sign Out */}
-                  {onLogout && (
-                    <button
-                      onClick={() => {
-                        setShowProfileDropdown(false);
-                        onLogout();
-                      }}
-                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition mt-1"
-                    >
-                      <LogOut className="w-4 h-4" />
-                      <span>Sign Out</span>
-                    </button>
-                  )}
                 </div>
-              )}
+
+                {/* Multiple Canteens Selection Dropdown */}
+                {showCanteenDropdown && canteensList.length > 1 && (
+                  <div className="absolute top-full left-0 mt-2 w-64 bg-white/95 backdrop-blur-md rounded-2xl shadow-card border border-[#BFEBDD] p-2 z-50 animate-in fade-in zoom-in-95">
+                    <p className="text-[10px] uppercase font-bold text-[#64839A] px-2 py-1">Switch Canteen</p>
+                    {canteensList.map(c => (
+                      <button
+                        key={c.id}
+                        onClick={() => handleSelectCanteen(c.id)}
+                        className={`w-full text-left px-3 py-2 rounded-xl text-xs font-bold transition flex items-center justify-between ${
+                          selectedCanteenId === c.id ? 'bg-[#DFF3E8] text-[#073653]' : 'text-slate-700 hover:bg-slate-50'
+                        }`}
+                      >
+                        <span>{c.name}</span>
+                        {selectedCanteenId === c.id && <Check className="w-4 h-4 text-[#00B894]" />}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
+
+            {/* Right Header: Desktop Search + Notifications + Customer Profile (Visible & Accessible on mobile!) */}
+            <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+              {/* Desktop Search Field */}
+              <div className="relative hidden lg:block w-56 xl:w-64">
+                <Search className="w-4 h-4 text-[#64839A] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search menu items..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-[#64839A] focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Notification Bell */}
+              <button
+                onClick={() => setActiveTab('NOTIFICATIONS')}
+                className="p-2 sm:p-2.5 rounded-full bg-white/90 border border-[#BFEBDD]/70 text-[#073653] hover:bg-white relative transition shadow-sm min-h-[38px] min-w-[38px] sm:min-h-[40px] sm:min-w-[40px] flex items-center justify-center shrink-0 cursor-pointer"
+                aria-label="Notifications"
+              >
+                <Bell className="w-4 h-4 text-[#073653]" />
+                {unreadNotificationsCount > 0 && (
+                  <span className="w-2.5 h-2.5 bg-[#FF5A5F] rounded-full absolute top-1 right-1 ring-2 ring-white" />
+                )}
+              </button>
+
+              {/* Customer Profile Pill (Visible on top right on mobile and desktop) */}
+              <div className="relative shrink-0">
+                <button
+                  onClick={() => setShowProfileDropdown(!showProfileDropdown)}
+                  className="bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/70 p-1 sm:pl-1.5 sm:pr-3 sm:py-1 rounded-full shadow-sm flex items-center gap-1.5 sm:gap-2.5 hover:bg-white transition cursor-pointer min-h-[38px] sm:min-h-[40px]"
+                  aria-label="User profile settings"
+                >
+                  <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#DFF3E8] text-[#073653] font-black flex items-center justify-center text-xs border border-[#BFEBDD]/60 shrink-0">
+                    {user?.name ? user.name.charAt(0).toUpperCase() : 'S'}
+                  </div>
+                  <div className="text-left text-xs pr-1 hidden sm:block">
+                    <p className="font-extrabold text-[#073653] leading-tight truncate max-w-[100px]">{user?.name || 'Siya Sen'}</p>
+                    <p className="text-[10px] text-[#64839A] font-medium leading-tight">Student</p>
+                  </div>
+                  <ChevronDown className="w-3.5 h-3.5 text-[#64839A]" />
+                </button>
+
+                {/* Profile Dropdown */}
+                {showProfileDropdown && (
+                  <div className="absolute right-0 mt-2 w-64 bg-white/95 backdrop-blur-md rounded-2xl shadow-card border border-[#BFEBDD] p-3 z-50 animate-in fade-in zoom-in-95">
+                    <div className="px-2 pb-3 border-b border-[#DFF3E8]">
+                      <p className="text-xs font-black text-[#073653]">{user?.name}</p>
+                      <p className="text-[11px] font-bold text-[#64839A] mt-0.5">{user?.username || user?.email}</p>
+                      <div className="mt-2 pt-2 border-t border-[#DFF3E8] space-y-1 text-[11px] text-[#64839A]">
+                        <div className="flex justify-between items-center">
+                          <span>Role:</span>
+                          <span className="font-extrabold text-[#073653] uppercase px-2 py-0.5 bg-[#DFF3E8] rounded text-[10px]">Student</span>
+                        </div>
+                        <div className="flex justify-between items-center">
+                          <span>Campus:</span>
+                          <span className="font-bold text-[#073653]">IPCW (Delhi Univ.)</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Switch to Account Settings Tab */}
+                    <button
+                      onClick={() => {
+                        setShowProfileDropdown(false);
+                        setActiveTab('ACCOUNT');
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-[#073653] hover:bg-[#DFF3E8]/50 rounded-xl transition mt-1"
+                    >
+                      <User className="w-4 h-4 text-[#64839A]" />
+                      <span>Account Settings</span>
+                    </button>
+
+                    {/* Quick Link to My Orders */}
+                    <button
+                      onClick={() => {
+                        setShowProfileDropdown(false);
+                        setActiveTab('ORDERS');
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-[#073653] hover:bg-[#DFF3E8]/50 rounded-xl transition"
+                    >
+                      <Clock className="w-4 h-4 text-[#64839A]" />
+                      <span>My Orders</span>
+                    </button>
+
+                    {/* Exit View-As if Admin */}
+                    {isViewAsAdmin && onSwitchViewAs && (
+                      <button
+                        onClick={() => {
+                          setShowProfileDropdown(false);
+                          onSwitchViewAs('ADMIN');
+                        }}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-[#073653] bg-[#FFE0C7]/60 hover:bg-[#FFE0C7] rounded-xl transition mt-1"
+                      >
+                        <span>Exit View-As (Back to Admin)</span>
+                      </button>
+                    )}
+
+                    {/* Sign Out */}
+                    {onLogout && (
+                      <div className="mt-2 pt-2 border-t border-[#DFF3E8]">
+                        <button
+                          onClick={() => {
+                            setShowProfileDropdown(false);
+                            onLogout();
+                          }}
+                          className="w-full flex items-center gap-2 px-3 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition"
+                        >
+                          <LogOut className="w-4 h-4" />
+                          <span>Sign Out</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Mobile Search Bar (Only shown on screen < lg, neat and full width without overlapping) */}
+          <div className="relative block lg:hidden w-full">
+            <Search className="w-4 h-4 text-[#64839A] absolute left-3.5 top-1/2 -translate-y-1/2" />
+            <input
+              type="text"
+              placeholder="Search menu items..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full pl-9 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-[#64839A] focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </header>
 
@@ -1023,57 +1222,63 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
         {/* ========================================================================= */}
         {activeTab === 'MENU' && (
           <div className="space-y-4">
-            {/* 5. MENU CONTROLS ROW */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              {/* Left: Today's Menu vs Full Menu Tabs */}
-              <div className="flex items-center gap-2">
+            {/* 5. MENU CONTROLS ROW — Compact, Responsive, Grouped Toolbar */}
+            <div className="flex flex-wrap items-center justify-between gap-2.5">
+              {/* Left Group: Menu Mode Tabs (Segmented Control) */}
+              <div className="inline-flex p-1 bg-white/90 backdrop-blur-sm rounded-full border border-[#BFEBDD]/70 shadow-sm" role="tablist">
                 <button
                   onClick={() => setMenuMode('TODAY')}
-                  className={`px-5 py-2.5 rounded-full text-xs font-bold transition flex items-center gap-2 shadow-sm ${
+                  className={`px-3.5 sm:px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 min-h-[36px] ${
                     menuMode === 'TODAY'
-                      ? 'bg-[#0B725C] text-white'
-                      : 'bg-white/90 text-[#073653] border border-[#BFEBDD]/60 hover:bg-white'
+                      ? 'bg-[#0B725C] text-white shadow-xs'
+                      : 'text-[#073653] hover:text-[#0B725C]'
                   }`}
+                  role="tab"
+                  aria-selected={menuMode === 'TODAY'}
                 >
                   <Sun className="w-3.5 h-3.5" />
                   <span>Today's Menu</span>
                 </button>
                 <button
                   onClick={() => setMenuMode('ALL')}
-                  className={`px-5 py-2.5 rounded-full text-xs font-bold transition flex items-center gap-2 shadow-sm ${
+                  className={`px-3.5 sm:px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 min-h-[36px] ${
                     menuMode === 'ALL'
-                      ? 'bg-[#0B725C] text-white'
-                      : 'bg-white/90 text-[#073653] border border-[#BFEBDD]/60 hover:bg-white'
+                      ? 'bg-[#0B725C] text-white shadow-xs'
+                      : 'text-[#073653] hover:text-[#0B725C]'
                   }`}
+                  role="tab"
+                  aria-selected={menuMode === 'ALL'}
                 >
-                  <List className="w-3.5 h-3.5" />
+                  <Utensils className="w-3.5 h-3.5" />
                   <span>Full Menu</span>
                 </button>
               </div>
 
-              {/* Right: Grid View vs List View Buttons */}
-              <div className="flex items-center gap-2 self-end sm:self-auto">
+              {/* Right Group: Grid View vs List View Buttons (Segmented Control) */}
+              <div className="inline-flex p-1 bg-white/90 backdrop-blur-sm rounded-full border border-[#BFEBDD]/70 shadow-sm">
                 <button
                   onClick={() => setViewMode('GRID')}
-                  className={`px-4 py-2.5 rounded-full text-xs font-bold transition flex items-center gap-2 shadow-sm ${
+                  className={`px-3 sm:px-3.5 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 min-h-[36px] ${
                     viewMode === 'GRID'
-                      ? 'bg-[#0F5A4E] text-white'
-                      : 'bg-white/90 text-[#073653] border border-[#BFEBDD]/60 hover:bg-white'
+                      ? 'bg-[#073653] text-white shadow-xs'
+                      : 'text-[#64839A] hover:text-[#073653]'
                   }`}
+                  aria-label="Grid view"
                 >
                   <LayoutGrid className="w-3.5 h-3.5" />
-                  <span>Grid View</span>
+                  <span>Grid</span>
                 </button>
                 <button
                   onClick={() => setViewMode('LIST')}
-                  className={`px-4 py-2.5 rounded-full text-xs font-bold transition flex items-center gap-2 shadow-sm ${
+                  className={`px-3 sm:px-3.5 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 min-h-[36px] ${
                     viewMode === 'LIST'
-                      ? 'bg-[#0F5A4E] text-white'
-                      : 'bg-white/90 text-[#073653] border border-[#BFEBDD]/60 hover:bg-white'
+                      ? 'bg-[#073653] text-white shadow-xs'
+                      : 'text-[#64839A] hover:text-[#073653]'
                   }`}
+                  aria-label="List view"
                 >
                   <List className="w-3.5 h-3.5" />
-                  <span>List View</span>
+                  <span>List</span>
                 </button>
               </div>
             </div>
@@ -1152,7 +1357,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
               /* ========================================================= */
               /* 6. GRID VIEW MATCHING REFERENCE 1 (Strictly 4 Columns Max) */
               /* ========================================================= */
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 items-stretch">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5 items-stretch">
                 {filteredItems.map(item => {
                   const inCart = cart.find(ci => ci.item.id === item.id);
                   const isPriceNotFixed = item.price === null || item.price === undefined;
@@ -1163,11 +1368,11 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                   return (
                     <div
                       key={item.id}
-                      className="bg-[#FFFDF9] rounded-[24px] p-4.5 sm:p-5 border border-[#F2ECE4] shadow-[0_4px_16px_rgba(7,54,83,0.04)] hover:shadow-[0_8px_24px_rgba(7,54,83,0.08)] transition-all flex flex-col justify-between h-full relative group"
+                      className="bg-[#FFFDF9] rounded-[24px] p-4 sm:p-4.5 border border-[#F2ECE4] shadow-[0_4px_16px_rgba(7,54,83,0.04)] hover:shadow-[0_8px_24px_rgba(7,54,83,0.08)] transition-all flex flex-col justify-between h-full relative group"
                     >
-                      <div>
+                      <div className="flex-1 flex flex-col justify-between">
                         {/* Top Header Row of Card */}
-                        <div className="flex items-center justify-between gap-2 pb-2 h-6">
+                        <div className="flex items-center justify-between gap-2 pb-1.5 h-6">
                           <div className="flex items-center gap-1.5 overflow-hidden">
                             <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${
                               item.isVegetarian ? 'bg-[#00B894]' : 'bg-rose-500'
@@ -1190,16 +1395,16 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                           </div>
                         </div>
 
-                        {/* Item Details & Dish Image Row */}
-                        <div className="flex items-center justify-between gap-3 my-auto py-2">
+                        {/* Item Details & Dish Image Row (Tightly spaced, no empty gap) */}
+                        <div className="py-2 flex items-start justify-between gap-3">
                           <div className="flex-1 min-w-0 pr-1 flex flex-col justify-between">
                             <div>
-                              <h3 className="text-[17px] font-black text-[#073653] leading-tight tracking-tight truncate" title={item.name}>
+                              <h3 className="text-[16px] font-black text-[#073653] leading-snug tracking-tight truncate" title={item.name}>
                                 {item.name}
                               </h3>
                               {item.dailyCapacity && (
-                                <p className="text-xs text-[#8BA3B5] font-medium mt-1">
-                                  Daily Order Limit: {item.dailyCapacity}
+                                <p className="text-[11px] text-[#8BA3B5] font-medium mt-0.5">
+                                  Limit: {item.dailyCapacity}/day
                                 </p>
                               )}
                               {item.description && (
@@ -1209,8 +1414,8 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                               )}
                             </div>
 
-                            <div className="mt-3.5">
-                              <span className={`text-xs font-bold block mb-1 ${
+                            <div className="mt-2.5">
+                              <span className={`text-xs font-bold block mb-0.5 ${
                                 item.isAvailable && !isPriceNotFixed ? 'text-[#073653]' : 'text-slate-400'
                               }`}>
                                 {isPriceNotFixed ? 'Unavailable' : item.isAvailable ? 'In Stock' : 'Sold Out'}
@@ -1227,8 +1432,8 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                             </div>
                           </div>
 
-                          {/* Consistent square image container with slightly rounded corners on clean white bg (Requirement 2) */}
-                          <div className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-2xl bg-white border border-[#F2ECE4] shadow-sm shrink-0 flex items-center justify-center overflow-hidden p-1.5">
+                          {/* Square food image container without floating plus icon */}
+                          <div className="relative w-20 h-20 sm:w-22 sm:h-22 rounded-2xl bg-white border border-[#F2ECE4] shadow-sm shrink-0 flex items-center justify-center overflow-hidden p-1.5">
                             <img
                               src={dishImage}
                               alt={item.name}
@@ -1238,16 +1443,6 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                                 (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80';
                               }}
                             />
-                            {item.isAvailable && !isPriceNotFixed && (
-                              <button
-                                onClick={() => addToCart(item)}
-                                disabled={canteenStatus !== 'OPEN'}
-                                title="Add to cart"
-                                className="absolute -top-1.5 -right-1.5 w-6 h-6 rounded-full bg-white shadow-md border border-slate-100 text-[#073653] flex items-center justify-center hover:scale-105 hover:bg-[#F0FDF4] transition disabled:opacity-40 cursor-pointer"
-                              >
-                                <Plus className="w-3.5 h-3.5 text-[#073653]" />
-                              </button>
-                            )}
                           </div>
                         </div>
                       </div>
@@ -1589,36 +1784,70 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                   ))}
                 </div>
 
-                {/* 12-Hour AM/PM Exact Pickup Time Picker */}
+                {/* 12-Hour AM/PM Exact Pickup Time Slot Picker (Past slots disabled/blocked) */}
                 <div className="p-4 rounded-2xl bg-[#EAF5F8]/70 border border-[#BFEBDD]/80 space-y-3">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <Clock className="w-4 h-4 text-[#0B725C]" />
-                      <span className="font-extrabold text-xs text-[#073653]">Choose Exact Pickup Time</span>
+                      <span className="font-extrabold text-xs text-[#073653]">Choose Available Pickup Slot</span>
                     </div>
                     <span className="text-[10px] uppercase font-bold text-[#073653] bg-white px-2 py-0.5 rounded border border-[#BFEBDD]">
                       8:00 AM – 5:00 PM IST
                     </span>
                   </div>
 
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                    <input
-                      type="time"
-                      value={selectedTimeStr}
-                      onChange={(e) => setSelectedTimeStr(e.target.value)}
-                      min="08:00"
-                      max="17:00"
-                      className="px-3.5 py-2 min-h-[44px] rounded-xl border border-[#BFEBDD] font-bold text-sm bg-white text-[#073653] focus:outline-none focus:ring-2 focus:ring-[#00B894]"
-                    />
-                    <div className="text-xs">
-                      <span className="text-[#64839A] block font-medium">Assigned 15-Minute Prep Batch:</span>
-                      <span className="font-extrabold text-[#0B725C]">{calculatedBatch}</span>
+                  {daySlots.every(s => s.isPast) ? (
+                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      <span>All pickup slots for today have ended. IP Canteen orders are closed until tomorrow 8:00 AM IST.</span>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {/* 15-Minute Slot Selector Dropdown */}
+                        <div>
+                          <label className="text-[11px] font-bold text-[#64839A] block mb-1">
+                            Available 15-Minute Slots Today
+                          </label>
+                          <select
+                            value={selectedTimeStr}
+                            onChange={(e) => setSelectedTimeStr(e.target.value)}
+                            className="w-full px-3 py-2 min-h-[44px] rounded-xl border border-[#BFEBDD] font-bold text-xs bg-white text-[#073653] focus:outline-none focus:ring-2 focus:ring-[#00B894] cursor-pointer"
+                          >
+                            {daySlots.map(slot => (
+                              <option key={slot.canonical} value={slot.canonical} disabled={slot.isPast}>
+                                {slot.batchLabel} {slot.isPast ? '(Passed)' : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Precise Target Time (HH:mm) */}
+                        <div>
+                          <label className="text-[11px] font-bold text-[#64839A] block mb-1">
+                            Exact Pickup Time
+                          </label>
+                          <input
+                            type="time"
+                            value={selectedTimeStr}
+                            onChange={(e) => setSelectedTimeStr(e.target.value)}
+                            min="08:00"
+                            max="17:00"
+                            className="w-full px-3.5 py-2 min-h-[44px] rounded-xl border border-[#BFEBDD] font-bold text-xs bg-white text-[#073653] focus:outline-none focus:ring-2 focus:ring-[#00B894]"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="text-xs pt-1 flex items-center justify-between">
+                        <span className="text-[#64839A] font-medium">Assigned Kitchen Batch:</span>
+                        <span className="font-extrabold text-[#0B725C]">{calculatedBatch}</span>
+                      </div>
+                    </div>
+                  )}
 
                   {timeValidationError && (
                     <p className="text-xs text-rose-600 font-semibold flex items-center gap-1.5 mt-1">
-                      <AlertCircle className="w-3.5 h-3.5" />
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
                       {timeValidationError}
                     </p>
                   )}
@@ -1688,7 +1917,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                 {isLoadingOrders && ordersList.length === 0 ? (
                   <div className="space-y-4 animate-pulse">
                     {[...Array(2)].map((_, i) => (
-                      <div key={i} className="bg-white/95 rounded-3xl border border-[#BFEBDD]/60 p-6 h-40" />
+                      <div key={i} className="bg-white/95 rounded-3xl border border-[#BFEBDD]/60 p-6 h-48" />
                     ))}
                   </div>
                 ) : activeOrders.length === 0 ? (
@@ -1701,42 +1930,113 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                   activeOrders.map(order => {
                     const pickupCode = order.pickupCode;
                     const isPaying = actionLoading[order.id] === 'PAYING';
+                    const dateTime = formatDateTimeIST(order.createdAt);
 
                     return (
-                      <div key={order.id} className="bg-white/95 rounded-3xl border border-[#BFEBDD]/60 shadow-card p-6 space-y-4">
-                        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-extrabold text-sm text-[#073653]">#{order.orderNumber}</span>
-                              <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                                order.status === 'REQUESTED' ? 'bg-amber-100 text-amber-800' :
-                                order.status === 'ACCEPTED' ? 'bg-blue-100 text-blue-800' :
-                                order.status === 'CONFIRMED' ? 'bg-emerald-100 text-emerald-800' :
-                                order.status === 'PREPARING' ? 'bg-purple-100 text-purple-800' :
-                                order.status === 'READY' ? 'bg-teal-100 text-teal-800' :
-                                'bg-slate-100 text-slate-700'
-                              }`}>
-                                {order.status}
-                              </span>
+                      <div key={order.id} className="bg-[#FFFDF9] rounded-3xl border border-[#BFEBDD]/70 shadow-card p-5 sm:p-6 space-y-4">
+                        {/* Receipt Top Header */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#DFF3E8]">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-xl bg-[#DFF3E8] border border-[#BFEBDD]/70 flex items-center justify-center text-[#0B725C] shrink-0">
+                              <Receipt className="w-4 h-4" />
                             </div>
-                            <p className="text-xs text-[#64839A] mt-1 font-medium">
-                              Pickup Time: <span className="font-bold text-[#073653]">{format12TimeIST(order.exactPickupTime)}</span> • Batch: <span className="font-bold text-[#073653]">{order.batch?.displayLabel || '15-min Batch'}</span>
-                            </p>
+                            <div>
+                              <span className="font-mono font-black text-sm text-[#073653]">#{order.orderNumber}</span>
+                              <p className="text-[11px] text-[#64839A] font-medium">
+                                Placed: {dateTime.date} at {dateTime.time} IST
+                              </p>
+                            </div>
                           </div>
-                          <div className="text-left sm:text-right">
-                            <span className="text-base font-extrabold text-[#0B725C]">₹{order.totalAmount}</span>
-                            <span className="block text-[11px] text-[#64839A] uppercase font-bold">{order.paymentStatus}</span>
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide border ${
+                            order.status === 'REQUESTED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                            order.status === 'ACCEPTED' ? 'bg-blue-50 text-blue-800 border-blue-200' :
+                            order.status === 'CONFIRMED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                            order.status === 'PREPARING' ? 'bg-purple-50 text-purple-800 border-purple-200' :
+                            order.status === 'READY' ? 'bg-teal-50 text-teal-800 border-teal-200' :
+                            'bg-slate-50 text-slate-700 border-slate-200'
+                          }`}>
+                            {order.status}
+                          </span>
+                        </div>
+
+                        {/* Outlet & Pickup Metadata */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs bg-[#F7FCFA] rounded-2xl p-3 border border-[#DFF3E8]">
+                          <div>
+                            <span className="text-[#64839A] block font-medium">Outlet:</span>
+                            <span className="font-extrabold text-[#073653]">{order.canteenName || currentCanteenName}</span>
+                            <span className="text-[#64839A] block text-[11px]">{order.canteenLocation || 'Indraprastha College for Women'}</span>
+                          </div>
+                          <div className="sm:text-right">
+                            <span className="text-[#64839A] block font-medium">Scheduled Pickup:</span>
+                            <span className="font-extrabold text-[#0B725C]">
+                              {order.batch?.displayLabel || (order.exactPickupTime ? format12TimeIST(order.exactPickupTime) : '15-min Batch')}
+                            </span>
+                            {order.exactPickupTime && (
+                              <span className="text-[#64839A] block text-[11px]">
+                                Target Time: {format12TimeIST(order.exactPickupTime)} IST
+                              </span>
+                            )}
                           </div>
                         </div>
 
-                        {/* Order Items */}
-                        <div className="space-y-1 text-xs text-slate-600">
-                          {order.items?.map((it, idx) => (
-                            <div key={idx} className="flex justify-between">
-                              <span>{it.quantity}× {it.itemName}</span>
-                              <span>₹{parseFloat(it.subtotal).toFixed(2)}</span>
+                        {/* Itemized Receipt Table */}
+                        <div className="space-y-2 pt-1">
+                          <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-[#64839A] pb-1 border-b border-dashed border-[#BFEBDD]/60">
+                            <span>Item & Qty</span>
+                            <div className="flex items-center gap-6">
+                              <span className="hidden sm:inline">Price</span>
+                              <span>Amount</span>
                             </div>
-                          ))}
+                          </div>
+                          <div className="space-y-2 text-xs">
+                            {order.items?.map((it, idx) => (
+                              <div key={idx} className="flex items-center justify-between text-[#073653]">
+                                <div className="pr-2">
+                                  <span className="font-bold">{it.quantity}× </span>
+                                  <span className="font-medium">{it.itemName}</span>
+                                </div>
+                                <div className="flex items-center gap-6 shrink-0 font-mono">
+                                  <span className="text-[#64839A] text-[11px] hidden sm:inline">
+                                    ₹{parseFloat(it.unitPrice).toFixed(2)}
+                                  </span>
+                                  <span className="font-bold text-[#073653] text-right min-w-[55px]">
+                                    ₹{parseFloat(it.subtotal).toFixed(2)}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Bill Summary */}
+                        <div className="border-t border-[#DFF3E8] pt-3 space-y-1.5 text-xs">
+                          <div className="flex justify-between items-center text-[#64839A]">
+                            <span>Items Subtotal</span>
+                            <span className="font-mono font-bold text-[#073653]">₹{parseFloat(order.totalAmount).toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-sm font-black text-[#073653] pt-1 border-t border-dashed border-[#BFEBDD]/60">
+                            <span>Final Total</span>
+                            <span className="text-base text-[#0B725C] font-mono">₹{parseFloat(order.totalAmount).toFixed(2)}</span>
+                          </div>
+                        </div>
+
+                        {/* Payment Details */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#DFF3E8] text-xs">
+                          <div className="flex items-center gap-2">
+                            <CreditCard className="w-3.5 h-3.5 text-[#0B725C]" />
+                            <span className="text-[#64839A]">Payment Method:</span>
+                            <span className="font-bold text-[#073653]">{order.paymentMethod || 'UPI / Online'}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[#64839A]">Payment Status:</span>
+                            <span className={`px-2 py-0.5 rounded font-bold text-[10px] uppercase ${
+                              order.paymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-800' :
+                              order.paymentStatus === 'PENDING' ? 'bg-amber-100 text-amber-800' :
+                              'bg-slate-100 text-slate-700'
+                            }`}>
+                              {order.paymentStatus}
+                            </span>
+                          </div>
                         </div>
 
                         {/* Pay Button for Accepted Order */}
@@ -1749,7 +2049,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                             <button
                               onClick={() => handlePayOrder(order.id)}
                               disabled={isPaying}
-                              className="px-4 py-2 bg-[#0B725C] text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-sm"
+                              className="px-4 py-2 bg-[#0B725C] hover:bg-[#085a49] text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-sm transition cursor-pointer"
                             >
                               {isPaying ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CreditCard className="w-3.5 h-3.5" />}
                               <span>Simulate Payment (₹{order.totalAmount})</span>
@@ -1759,12 +2059,12 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
                         {/* Pickup Code Display */}
                         {pickupCode && ['CONFIRMED', 'PREPARING', 'READY'].includes(order.status) && (
-                          <div className="p-3 bg-[#DFF3E8] rounded-xl border border-[#BFEBDD] flex items-center justify-between">
+                          <div className="p-3.5 bg-[#DFF3E8] rounded-2xl border border-[#BFEBDD] flex items-center justify-between">
                             <div className="flex items-center gap-2">
                               <QrCode className="w-4 h-4 text-[#0B725C]" />
                               <span className="text-xs font-bold text-[#073653]">Pickup Verification Code:</span>
                             </div>
-                            <span className="font-mono text-sm font-black text-[#0B725C] tracking-wider">{pickupCode}</span>
+                            <span className="font-mono text-base font-black text-[#0B725C] tracking-widest">{pickupCode}</span>
                           </div>
                         )}
                       </div>
@@ -1781,22 +2081,137 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                   <div className="bg-white/95 rounded-3xl border border-[#BFEBDD]/60 p-12 text-center shadow-card">
                     <History className="w-10 h-10 text-slate-300 mx-auto mb-2" />
                     <p className="text-sm font-semibold text-slate-600">No past orders</p>
+                    <p className="text-xs text-slate-400 mt-1">Completed and past orders will appear here.</p>
                   </div>
                 ) : (
-                  previousOrders.map(order => (
-                    <div key={order.id} className="bg-white/95 rounded-2xl border border-slate-200 p-4 flex items-center justify-between">
-                      <div>
-                        <span className="font-extrabold text-xs text-[#073653]">#{order.orderNumber}</span>
-                        <p className="text-[11px] text-[#64839A] mt-0.5">
-                          {new Date(order.createdAt).toLocaleDateString()} • {order.items?.length || 0} items
-                        </p>
+                  previousOrders.map(order => {
+                    const dateTime = formatDateTimeIST(order.createdAt);
+
+                    return (
+                      <div key={order.id} className="bg-[#FFFDF9] rounded-3xl border border-[#BFEBDD]/70 shadow-card p-5 sm:p-6 space-y-4">
+                        {/* Receipt Top Header */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#DFF3E8]">
+                          <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-xl bg-[#DFF3E8] border border-[#BFEBDD]/70 flex items-center justify-center text-[#0B725C] shrink-0">
+                              <Receipt className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <span className="font-mono font-black text-sm text-[#073653]">#{order.orderNumber}</span>
+                              <p className="text-[11px] text-[#64839A] font-medium">
+                                Placed: {dateTime.date} at {dateTime.time} IST
+                              </p>
+                            </div>
+                          </div>
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide border ${
+                            order.status === 'COLLECTED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
+                            order.status === 'CANCELLED' || order.status === 'REJECTED' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                            'bg-slate-50 text-slate-700 border-slate-200'
+                          }`}>
+                            {order.status === 'COLLECTED' ? '✓ Collected' : order.status}
+                          </span>
+                        </div>
+
+                        {/* Outlet & Historical Pickup Metadata */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs bg-[#F7FCFA] rounded-2xl p-3 border border-[#DFF3E8]">
+                          <div>
+                            <span className="text-[#64839A] block font-medium">Outlet:</span>
+                            <span className="font-extrabold text-[#073653]">{order.canteenName || currentCanteenName}</span>
+                            <span className="text-[#64839A] block text-[11px]">{order.canteenLocation || 'Indraprastha College for Women'}</span>
+                          </div>
+                          <div className="sm:text-right">
+                            <span className="text-[#64839A] block font-medium">Original Pickup Slot:</span>
+                            <span className="font-extrabold text-[#073653]">
+                              {order.batch?.displayLabel || (order.exactPickupTime ? format12TimeIST(order.exactPickupTime) : '15-min Batch')}
+                            </span>
+                            {order.exactPickupTime && (
+                              <span className="text-[#64839A] block text-[11px]">
+                                Target Time: {format12TimeIST(order.exactPickupTime)} IST
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Itemized Receipt Table */}
+                        <div className="space-y-2 pt-1">
+                          <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-[#64839A] pb-1 border-b border-dashed border-[#BFEBDD]/60">
+                            <span>Purchased Items & Qty</span>
+                            <div className="flex items-center gap-6">
+                              <span className="hidden sm:inline">Price</span>
+                              <span>Amount</span>
+                            </div>
+                          </div>
+                          <div className="space-y-2 text-xs">
+                            {order.items?.map((it, idx) => (
+                              <div key={idx} className="flex items-center justify-between text-[#073653]">
+                                <div className="pr-2">
+                                  <span className="font-bold">{it.quantity}× </span>
+                                  <span className="font-medium">{it.itemName}</span>
+                                </div>
+                                <div className="flex items-center gap-6 shrink-0 font-mono">
+                                  <span className="text-[#64839A] text-[11px] hidden sm:inline">
+                                    ₹{parseFloat(it.unitPrice).toFixed(2)}
+                                  </span>
+                                  <span className="font-bold text-[#073653] text-right min-w-[55px]">
+                                    ₹{parseFloat(it.subtotal).toFixed(2)}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Bill Summary */}
+                        <div className="border-t border-[#DFF3E8] pt-3 space-y-1.5 text-xs">
+                          <div className="flex justify-between items-center text-[#64839A]">
+                            <span>Items Subtotal</span>
+                            <span className="font-mono font-bold text-[#073653]">₹{parseFloat(order.totalAmount).toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-sm font-black text-[#073653] pt-1 border-t border-dashed border-[#BFEBDD]/60">
+                            <span>Final Total</span>
+                            <span className="text-base text-[#0B725C] font-mono">₹{parseFloat(order.totalAmount).toFixed(2)}</span>
+                          </div>
+                        </div>
+
+                        {/* Payment Details & Reorder Action */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-[#DFF3E8]">
+                          <div className="space-y-1 text-xs">
+                            <div className="flex items-center gap-2">
+                              <CreditCard className="w-3.5 h-3.5 text-[#0B725C]" />
+                              <span className="text-[#64839A]">Payment Method:</span>
+                              <span className="font-bold text-[#073653]">{order.paymentMethod || 'UPI / Online'}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[#64839A]">Payment Status:</span>
+                              <span className={`px-2 py-0.5 rounded font-bold text-[10px] uppercase ${
+                                order.paymentStatus === 'PAID' ? 'bg-emerald-100 text-emerald-800' :
+                                order.paymentStatus === 'REFUNDED' ? 'bg-purple-100 text-purple-800' :
+                                'bg-slate-100 text-slate-700'
+                              }`}>
+                                {order.paymentStatus}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Reorder Button */}
+                          <button
+                            onClick={() => handleReorder(order)}
+                            className="px-4 py-2 bg-[#0B725C] hover:bg-[#085a49] text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-2 shadow-sm cursor-pointer self-start sm:self-auto"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                            <span>Reorder</span>
+                          </button>
+                        </div>
+
+                        {/* Rejection/Cancellation note if any */}
+                        {(order.rejectionReason || order.rejectionNote) && (
+                          <div className="p-3 bg-rose-50 rounded-xl border border-rose-200 text-xs text-rose-700">
+                            <span className="font-bold">Reason: </span>
+                            <span>{order.rejectionReason || order.rejectionNote}</span>
+                          </div>
+                        )}
                       </div>
-                      <div className="text-right">
-                        <span className="text-xs font-extrabold text-[#073653]">₹{order.totalAmount}</span>
-                        <span className="block text-[10px] text-[#64839A] uppercase font-bold">{order.status}</span>
-                      </div>
-                    </div>
-                  ))
+                    );
+                  })
                 )}
               </div>
             )}

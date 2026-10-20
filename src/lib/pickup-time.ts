@@ -246,6 +246,117 @@ export function validatePickupTimeCanonical(input: string | Date | null | undefi
 }
 
 /**
+ * Checks whether a 15-minute preparation slot for a given canonical pickup time
+ * has already ended relative to the current IST time.
+ * Rule: A slot ending at or before current time is past and unavailable.
+ */
+export function isPastPickupSlot(
+  canonicalOrBatch: string | Date,
+  now: Date = new Date()
+): { isPast: boolean; batchLabel: string; batchEndDisplay: string; batchEndMinutes: number } {
+  const parsed = parseTimeToMinutes(canonicalOrBatch);
+  if (!parsed) {
+    return { isPast: true, batchLabel: 'Invalid Slot', batchEndDisplay: '--:--', batchEndMinutes: 0 };
+  }
+
+  const batch = calculate15MinBatch(parsed.canonical);
+  const endParsed = parseTimeToMinutes(batch.canonicalEnd);
+  if (!endParsed) {
+    return { isPast: true, batchLabel: batch.displayLabel, batchEndDisplay: '--:--', batchEndMinutes: 0 };
+  }
+
+  const nowIST = getISTDateParts(now);
+  const currentMinutesIST = nowIST.hours * 60 + nowIST.minutes;
+  const isPast = endParsed.totalMinutes <= currentMinutesIST;
+
+  return {
+    isPast,
+    batchLabel: batch.displayLabel,
+    batchEndDisplay: formatCanonicalTo12Hour(batch.canonicalEnd),
+    batchEndMinutes: endParsed.totalMinutes,
+  };
+}
+
+/**
+ * Validates that requested pickup time is within operating hours (8:00 AM - 5:00 PM IST)
+ * AND that the assigned pickup slot has not already passed for today.
+ */
+export function validateFuturePickupTimeCanonical(
+  input: string | Date | null | undefined,
+  now: Date = new Date()
+): {
+  valid: boolean;
+  canonical?: string;
+  error?: string;
+  totalMinutes?: number;
+  displayTime?: string;
+  batchLabel?: string;
+} {
+  const baseValidation = validatePickupTimeCanonical(input);
+  if (!baseValidation.valid || !baseValidation.canonical) {
+    return baseValidation;
+  }
+
+  const pastCheck = isPastPickupSlot(baseValidation.canonical, now);
+  if (pastCheck.isPast) {
+    return {
+      valid: false,
+      canonical: baseValidation.canonical,
+      totalMinutes: baseValidation.totalMinutes,
+      displayTime: baseValidation.displayTime,
+      batchLabel: pastCheck.batchLabel,
+      error: `Selected pickup slot (${pastCheck.batchLabel}) has already passed for today. Please select a valid future pickup time.`,
+    };
+  }
+
+  return {
+    valid: true,
+    canonical: baseValidation.canonical,
+    totalMinutes: baseValidation.totalMinutes,
+    displayTime: baseValidation.displayTime,
+    batchLabel: pastCheck.batchLabel,
+  };
+}
+
+export interface PickupSlotOption {
+  canonical: string;
+  batchLabel: string;
+  slotStartTime: string;
+  slotEndTime: string;
+  isPast: boolean;
+}
+
+/**
+ * Returns all continuous 15-minute preparation batches across operating hours (8:00 AM to 5:00 PM IST)
+ * along with their availability status relative to the current IST time.
+ */
+export function getAllDayPickupSlots(now: Date = new Date()): PickupSlotOption[] {
+  const slots: PickupSlotOption[] = [];
+  const nowIST = getISTDateParts(now);
+  const currentMinutesIST = nowIST.hours * 60 + nowIST.minutes;
+
+  // Canteen slots: 8:00 AM (480) up to 4:45 PM (1005) which ends at 5:00 PM (1020)
+  for (let mins = CANONICAL_HOURS.OPENING_MINUTES; mins < CANONICAL_HOURS.CLOSING_MINUTES; mins += 15) {
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    const canonical = `${pad2(h)}:${pad2(m)}`;
+    const batch = calculate15MinBatch(canonical);
+    const endMinutes = mins + 15;
+    const isPast = endMinutes <= currentMinutesIST;
+
+    slots.push({
+      canonical,
+      batchLabel: batch.displayLabel,
+      slotStartTime: formatCanonicalTo12Hour(canonical),
+      slotEndTime: formatCanonicalTo12Hour(batch.canonicalEnd),
+      isPast,
+    });
+  }
+
+  return slots;
+}
+
+/**
  * Formats canonical 'HH:mm' into standard user-facing 'h:mm AM/PM'
  * e.g. '08:00' -> '8:00 AM', '13:00' -> '1:00 PM', '12:00' -> '12:00 PM'
  */

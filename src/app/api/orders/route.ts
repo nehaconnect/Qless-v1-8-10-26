@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db, orders, orderItems, pickupBatches, canteens, user, pickupCodes } from '@/lib/db';
+import { db, orders, orderItems, pickupBatches, canteens, user, pickupCodes, payments } from '@/lib/db';
 import { eq, desc, and, inArray, gte, lte } from 'drizzle-orm';
 import { requireAuth } from '@/lib/auth/server';
 import { createOrder, decryptPickupCode, format12HourIST } from '@/lib/services/order-service';
@@ -129,12 +129,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ orders: [], summary });
     }
 
-    // Attach order items, customer name, batch info, and authorized pickup codes
+    // Attach order items, customer name, batch info, authorized pickup codes, canteen info, and payment records
     const orderIds = orderList.map((o) => o.id);
     const batchIds = [...new Set(orderList.map((o) => o.batchId).filter(Boolean))] as string[];
     const customerIds = [...new Set(orderList.map((o) => o.customerId).filter(Boolean))] as string[];
+    const canteenIds = [...new Set(orderList.map((o) => o.canteenId).filter(Boolean))] as string[];
 
-    const [allItems, allBatches, allCustomers, allCodes] = await Promise.all([
+    const [allItems, allBatches, allCustomers, allCodes, allCanteens, allPayments] = await Promise.all([
       db.select().from(orderItems).where(inArray(orderItems.orderId, orderIds)),
       batchIds.length > 0
         ? db.select().from(pickupBatches).where(inArray(pickupBatches.id, batchIds))
@@ -146,6 +147,10 @@ export async function GET(req: NextRequest) {
             .where(inArray(user.id, customerIds))
         : Promise.resolve([]),
       db.select().from(pickupCodes).where(inArray(pickupCodes.orderId, orderIds)),
+      canteenIds.length > 0
+        ? db.select({ id: canteens.id, name: canteens.name, location: canteens.location }).from(canteens).where(inArray(canteens.id, canteenIds))
+        : Promise.resolve([]),
+      db.select().from(payments).where(inArray(payments.orderId, orderIds)),
     ]);
 
     const itemsByOrder = new Map<string, any[]>();
@@ -170,6 +175,16 @@ export async function GET(req: NextRequest) {
       codeByOrder.set(pc.orderId, pc);
     }
 
+    const canteenById = new Map<string, any>();
+    for (const cn of allCanteens) {
+      canteenById.set(cn.id, cn);
+    }
+
+    const paymentByOrder = new Map<string, any>();
+    for (const pay of allPayments) {
+      paymentByOrder.set(pay.orderId, pay);
+    }
+
     const enrichedOrders = orderList.map((ord) => {
       const pcRecord = codeByOrder.get(ord.id);
       let visiblePickupCode: string | null = null;
@@ -189,8 +204,22 @@ export async function GET(req: NextRequest) {
         }
       }
 
+      const canteenInfo = canteenById.get(ord.canteenId);
+      const paymentInfo = paymentByOrder.get(ord.id);
+      let resolvedPaymentMethod = 'UPI / Online';
+      if (paymentInfo?.provider) {
+        resolvedPaymentMethod = paymentInfo.provider === 'RAZORPAY' ? 'Razorpay UPI' : paymentInfo.provider;
+      } else if (ord.paymentStatus === 'PAID') {
+        resolvedPaymentMethod = 'UPI / Online';
+      } else {
+        resolvedPaymentMethod = 'Pending Payment';
+      }
+
       return {
         ...ord,
+        canteenName: canteenInfo?.name || 'IP Canteen',
+        canteenLocation: canteenInfo?.location || 'Indraprastha College for Women',
+        paymentMethod: resolvedPaymentMethod,
         exactPickupTime: ord.exactPickupTime ? ord.exactPickupTime.toISOString() : null,
         exactPickupTimeCanonical: ord.exactPickupTime ? toCanonicalPickupTime(ord.exactPickupTime) : null,
         exactPickupTimeFormatted: ord.exactPickupTime ? formatPickupTimeDisplay(ord.exactPickupTime) : '--:--',
@@ -216,7 +245,7 @@ export async function POST(req: NextRequest) {
   try {
     const authUser = await requireAuth();
     const body = await req.json();
-    const { canteenId, items, exactPickupTime, idempotencyKey } = body;
+    const { canteenId, items, exactPickupTime, idempotencyKey, simulatedNow } = body;
 
     let targetCanteenId = canteenId;
     if (!targetCanteenId) {
@@ -238,6 +267,7 @@ export async function POST(req: NextRequest) {
       items,
       exactPickupTime,
       idempotencyKey: key,
+      simulatedNow: simulatedNow ? new Date(simulatedNow) : undefined,
     });
 
     return NextResponse.json({
