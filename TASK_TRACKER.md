@@ -167,5 +167,77 @@ This audit was conducted before starting Prompt 1 to protect existing work and p
 ---
 
 ## 7. Outstanding Work & Next Actions
-1. All requirements for **Prompt 1: Customer Menu UI Alignment, Quantity Bug Fix & Task Tracker Setup** are 100% completed and verified with automated test and build evidence.
-2. The tracker is ready to receive Prompt 2 in the continuing sequence.
+1. Prompt 1 is 100% completed, verified with automated test suites, and deployed live.
+2. Prompt 2 is 100% completed, verified with automated test suites, and deployed live.
+
+---
+
+## Prompt 2 — Customer Cart, Scheduling, Order History & Menu UI
+**Date**: October 20, 2026  
+**Scope**: Cart persistence across page reloads, "+ Add" to stepper transition, Today vs Tomorrow scheduling (8 AM–5 PM), 2-hour grace period with separate "Not Collected" vs "No Payment" labels, Hindi search placeholder "आज क्या खाएं?", seller-uploaded image preservation, and end-to-end verification.
+
+### Checklist of Requirements
+
+#### A. Cart Persistence & Quantity Controls
+- `[x]` 1. Inspect existing cart state in `CustomerPortal.tsx` and integrate `localStorage` persistence (`qless_customer_cart`).
+- `[x]` 2. Ensure cart items and quantities survive page refreshes, tab switching, and reopening the customer portal.
+- `[x]` 3. Cart items remain until explicitly removed, cleared, or checked out into a completed order.
+- `[x]` 4. Initial card state: Display a clear **“+ Add”** button when item is not in cart (`quantity === 0`).
+- `[x]` 5. Active card state: Replace button with quantity stepper (`[ - ]  quantity  [ + ]`) when quantity > 0.
+- `[x]` 6. Increment handler: Click on `+` increases quantity by exactly 1 per click.
+- `[x]` 7. Decrement handler: Click on `−` decreases quantity by exactly 1 per click.
+- `[x]` 8. Zero boundary: When quantity reaches 0, item is removed from cart and card returns to **“+ Add”**.
+- `[x]` 9. Rapid click resilience: Single-state updates prevent exponential jumps or inverted decrement behavior.
+- `[x]` 10. Preserve cart drawer, checkout modal, subtotal, and grand total calculations.
+
+#### B. Pickup Slot Scheduling (Today or Tomorrow Only)
+- `[x]` 11. Allow customer to select pickup date for **Today** or **Tomorrow** (India Standard Time).
+- `[x]` 12. Strictly block scheduling beyond tomorrow (no 3rd-day or arbitrary future dates).
+- `[x]` 13. Maintain compact UI: Use clean day toggle (`[ Today ]  [ Tomorrow ]`) in slot picker without a heavy calendar component.
+- `[x]` 14. Today slots: Only future valid slots enabled; past slots marked disabled/passed.
+- `[x]` 15. Tomorrow slots: All operating hours slots (8:00 AM to 5:00 PM IST) enabled and valid, even when ordering late evening (e.g. at 10 PM today).
+- `[x]` 16. Support Tomorrow pre-orders without failing current-day canteen CLOSED status check.
+- `[x]` 17. Reorder flow: Allow selecting a new valid pickup slot (Today or Tomorrow) before submitting; never silently reuse past slots.
+- `[x]` 18. Update server-side validation in `order-service.ts` to accept Today or Tomorrow IST dates.
+
+#### C. Active Orders & Previous Orders Lifecycle (Not Collected vs No Payment)
+- `[x]` 19. Active Orders: Display orders still awaiting payment, awaiting seller action, confirmed, preparing, or ready for pickup.
+- `[x]` 20. 2-Hour Grace Period: Keep unresolved orders in Active Orders for up to 2 hours past scheduled pickup time.
+- `[x]` 21. Automatic transition after 2-hour grace period:
+  - If order is **PAID** but uncollected -> Mark as **“Not Collected”** (`EXPIRED` with notice).
+  - If order is **UNPAID** -> Mark as **“No Payment”** (`EXPIRED` with notice, `paymentStatus: EXPIRED`).
+- `[x]` 22. Strictly avoid labeling unpaid orders as "Not Collected".
+- `[x]` 23. Chronological ordering in Previous Orders view using scheduled pickup date/time.
+- `[x]` 24. Ensure consistency across seller kitchen view and customer portal.
+
+#### D. Customer Menu Search Placeholder
+- `[x]` 25. Add clearly visible search icon inside the left side of the input (`absolute left-3.5`).
+- `[x]` 26. Update placeholder text to **“आज क्या खाएं?”** in a subtle, faded color (`placeholder:text-slate-400`).
+- `[x]` 27. Ensure icon does not overlap placeholder or typed text on desktop or mobile (`pl-9`).
+
+#### E. Seller-Uploaded Menu Images Preservation
+- `[x]` 28. Prioritize and display exact seller-uploaded image URL (`item.imageUrl`) from database.
+- `[x]` 29. Maintain medium compression without degrading visual quality.
+- `[x]` 30. Do not override or substitute sample images when seller image is present in database.
+
+#### F. Testing & Deployment Verification
+- `[x]` 31. Verify cart persistence across page reload and tab navigation (`localStorage`).
+- `[x]` 32. Verify "+ Add" to stepper and zero-reset transitions.
+- `[x]` 33. Verify Today vs Tomorrow slots (including 10 PM night ordering for tomorrow 8 AM).
+- `[x]` 34. Verify 2-hour grace period transitions ("Not Collected" vs "No Payment").
+- `[x]` 35. Verify Hindi placeholder and icon placement on desktop and mobile.
+- `[x]` 36. Run automated test suite (`npm run test:suite`): 16 Passed, 0 Failed.
+- `[x]` 37. Run canteen hours test suite (`npm run test:hours`): 28 Passed, 0 Failed.
+- `[x]` 38. Run Prompt 2 test suite (`npx tsx scripts/test-prompt2-features.ts`): 14 Passed, 0 Failed.
+- `[x]` 39. Run Next.js production build (`npm run build`): Completed successfully with 0 errors.
+- `[x]` 40. Commit changes and push to GitHub `main`.
+- `[x]` 41. Verify Vercel production deployment and live site response.
+
+---
+
+### Files Changed in Prompt 2
+- `TASK_TRACKER.md`: Documented requirements, completed checklist items, and test evidence.
+- `src/lib/pickup-time.ts`: Added `getISTTomorrowString`, updated `getAllDayPickupSlots` with tomorrow slot support, and enhanced `validateFuturePickupTimeCanonical` to strictly enforce Today or Tomorrow scheduling within operating hours.
+- `src/lib/services/order-service.ts`: Enabled Tomorrow pre-orders after closing hours, updated sequence numbering with canonical date, and enhanced `autoExpireUncollectedOrders` to distinguish between "NOT_COLLECTED_AFTER_2_HOURS" (paid) and "NO_PAYMENT_AFTER_2_HOURS" (unpaid).
+- `src/components/CustomerPortal.tsx`: Integrated cart `localStorage` persistence, initial "+ Add" replacing with stepper, Day toggle (`Today` vs `Tomorrow`), 2-hour grace period separation, distinct "Not Collected" vs "No Payment" badges, Hindi search placeholder "आज क्या खाएं?", left inside search icon (`pl-9`), and seller-uploaded image preservation.
+- `scripts/test-prompt2-features.ts`: Created automated test suite covering all Prompt 2 requirements.

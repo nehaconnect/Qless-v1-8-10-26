@@ -270,9 +270,9 @@ export async function createOrder(input: CreateOrderInput) {
     throw new Error(timeValidation.error || 'Requested pickup time must be within canteen operating hours (8:00 AM to 5:00 PM) and cannot be in the past');
   }
 
-  // Exact local IST timestamp
-  const todayIST = getISTTodayString(simulatedNow || new Date());
-  const pickupDate = canonicalTimeToISTDate(timeValidation.canonical, todayIST);
+  // Exact local IST timestamp (Today or Tomorrow)
+  const resolvedDateStr = timeValidation.dateStr || getISTTodayString(simulatedNow || new Date());
+  const pickupDate = canonicalTimeToISTDate(timeValidation.canonical, resolvedDateStr);
 
   // 2. Validate Canteen & Operating Hours
   const canteen = await db.query.canteens.findFirst({
@@ -283,14 +283,18 @@ export async function createOrder(input: CreateOrderInput) {
     throw new Error('Canteen is not available');
   }
 
-  const { effectiveStatus } = getEffectiveCanteenStatus(canteen, simulatedNow || new Date());
+  // If ordering for TODAY, enforce that the canteen is currently OPEN for today's orders.
+  // If ordering for TOMORROW, pre-ordering is allowed even after closing hours (e.g. at 10 PM tonight for tomorrow 8 AM).
+  if (!timeValidation.isTomorrow) {
+    const { effectiveStatus } = getEffectiveCanteenStatus(canteen, simulatedNow || new Date());
 
-  if (effectiveStatus === 'CLOSED') {
-    throw new Error('Canteen is closed. Orders are currently disabled.');
-  }
+    if (effectiveStatus === 'CLOSED') {
+      throw new Error('Canteen is closed. Orders are currently disabled.');
+    }
 
-  if (effectiveStatus === 'TOO_BUSY') {
-    throw new Error('Canteen is currently busy. New orders are temporarily unavailable.');
+    if (effectiveStatus === 'TOO_BUSY') {
+      throw new Error('Canteen is currently busy. New orders are temporarily unavailable.');
+    }
   }
 
   // 3. Fetch Authoritative Menu Prices Server-Side
@@ -378,7 +382,7 @@ export async function createOrder(input: CreateOrderInput) {
     `);
 
     // Atomic increment of daily sequence per Asia/Kolkata date
-    const yyyymmdd = todayIST.replace(/-/g, '');
+    const yyyymmdd = resolvedDateStr.replace(/-/g, '');
     const seqRes = await tx.execute(sql`
       INSERT INTO daily_sequences (sequence_date, current_val, updated_at)
       VALUES (${yyyymmdd}, 1, NOW())
@@ -812,8 +816,20 @@ export async function autoExpireUncollectedOrders(canteenId?: string) {
   try {
     const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
 
+    const activeStatuses = [
+      'REQUESTED',
+      'TIME_CHANGE_PROPOSED',
+      'ACCEPTED',
+      'AWAITING_PAYMENT',
+      'PAYMENT_PENDING',
+      'CONFIRMED',
+      'PREPARING',
+      'READY',
+      'READY_FOR_PICKUP',
+    ];
+
     const conditions = [
-      inArray(orders.status, ['READY', 'READY_FOR_PICKUP', 'CONFIRMED', 'PREPARING']),
+      inArray(orders.status, activeStatuses),
       sql`${orders.exactPickupTime} <= ${twoHoursAgo.toISOString()}`,
     ];
 
@@ -822,7 +838,15 @@ export async function autoExpireUncollectedOrders(canteenId?: string) {
     }
 
     const uncollectedOrders = await db
-      .select({ id: orders.id, orderNumber: orders.orderNumber, status: orders.status, customerId: orders.customerId, canteenId: orders.canteenId })
+      .select({
+        id: orders.id,
+        orderNumber: orders.orderNumber,
+        status: orders.status,
+        paymentStatus: orders.paymentStatus,
+        customerId: orders.customerId,
+        canteenId: orders.canteenId,
+        batchId: orders.batchId,
+      })
       .from(orders)
       .where(and(...conditions));
 
@@ -830,15 +854,32 @@ export async function autoExpireUncollectedOrders(canteenId?: string) {
 
     for (const ord of uncollectedOrders) {
       await db.transaction(async (tx) => {
+        const isPaid = ord.paymentStatus === 'PAID';
+        const reasonCode = isPaid ? 'NOT_COLLECTED_AFTER_2_HOURS' : 'NO_PAYMENT_AFTER_2_HOURS';
+        const reasonText = isPaid
+          ? 'Order remained uncollected 2 hours past scheduled pickup time.'
+          : 'Order closed because payment was not completed within the valid pickup time window.';
+
         await tx
           .update(orders)
           .set({
             status: 'EXPIRED',
-            rejectionReason: 'NOT_COLLECTED_AFTER_2_HOURS',
-            rejectionNote: 'Order remained uncollected 2 hours past scheduled pickup time.',
+            paymentStatus: isPaid ? 'PAID' : 'EXPIRED',
+            rejectionReason: reasonCode,
+            rejectionNote: reasonText,
             updatedAt: new Date(),
           })
-          .where(and(eq(orders.id, ord.id), inArray(orders.status, ['READY', 'READY_FOR_PICKUP', 'CONFIRMED', 'PREPARING'])));
+          .where(and(eq(orders.id, ord.id), inArray(orders.status, activeStatuses)));
+
+        // Release batch capacity for unpaid orders that never completed collection
+        if (!isPaid && ord.batchId) {
+          await tx
+            .update(pickupBatches)
+            .set({
+              reservedCount: sql`GREATEST(0, ${pickupBatches.reservedCount} - 1)`,
+            })
+            .where(eq(pickupBatches.id, ord.batchId));
+        }
 
         await tx.insert(orderStatusHistory).values({
           orderId: ord.id,
@@ -846,14 +887,18 @@ export async function autoExpireUncollectedOrders(canteenId?: string) {
           toStatus: 'EXPIRED',
           changedByUserId: ord.customerId,
           actorRole: 'SYSTEM',
-          reason: 'Order automatically marked not collected after 2-hour pickup expiry window.',
+          reason: isPaid
+            ? 'Order automatically marked not collected after 2-hour pickup expiry window.'
+            : 'Order automatically closed due to non-payment within 2-hour pickup expiry window.',
         });
 
         await tx.insert(notifications).values({
           userId: ord.customerId,
           orderId: ord.id,
-          title: 'Order Marked as Not Collected',
-          message: `Order #${ord.orderNumber} was marked as not collected because it remained uncollected 2 hours past the scheduled pickup time.`,
+          title: isPaid ? 'Order Marked as Not Collected' : 'Order Closed - No Payment',
+          message: isPaid
+            ? `Order #${ord.orderNumber} was marked as not collected because it remained uncollected 2 hours past the scheduled pickup time.`
+            : `Order #${ord.orderNumber} was closed because payment was not completed within the valid pickup window.`,
           type: 'ORDER_EXPIRED',
         });
       });

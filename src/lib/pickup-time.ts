@@ -77,6 +77,16 @@ export function getISTTodayString(now: Date = new Date()): string {
 }
 
 /**
+ * Returns tomorrow's date string in Asia/Kolkata: 'YYYY-MM-DD'
+ */
+export function getISTTomorrowString(now: Date = new Date()): string {
+  const parts = getISTDateParts(now);
+  const d = new Date(`${parts.year}-${parts.month}-${parts.day}T12:00:00+05:30`);
+  d.setDate(d.getDate() + 1);
+  return getISTDateParts(d).dateStr;
+}
+
+/**
  * Returns UTC Date boundaries for an Asia/Kolkata date range (YYYY-MM-DD to YYYY-MM-DD)
  */
 export function getISTDateRangeBounds(
@@ -280,10 +290,12 @@ export function isPastPickupSlot(
 /**
  * Validates that requested pickup time is within operating hours (8:00 AM - 5:00 PM IST)
  * AND that the assigned pickup slot has not already passed for today.
+ * Supports explicit pickup date (Today or Tomorrow in IST).
  */
 export function validateFuturePickupTimeCanonical(
   input: string | Date | null | undefined,
-  now: Date = new Date()
+  now: Date = new Date(),
+  targetDateStr?: string
 ): {
   valid: boolean;
   canonical?: string;
@@ -291,30 +303,75 @@ export function validateFuturePickupTimeCanonical(
   totalMinutes?: number;
   displayTime?: string;
   batchLabel?: string;
+  isTomorrow?: boolean;
+  dateStr?: string;
 } {
   const baseValidation = validatePickupTimeCanonical(input);
   if (!baseValidation.valid || !baseValidation.canonical) {
     return baseValidation;
   }
 
-  const pastCheck = isPastPickupSlot(baseValidation.canonical, now);
-  if (pastCheck.isPast) {
+  const todayStr = getISTTodayString(now);
+  const tomorrowStr = getISTTomorrowString(now);
+
+  // Check if input itself contained a date (e.g. ISO string like 2026-10-21T08:00)
+  let resolvedDateStr = targetDateStr || todayStr;
+  if (!targetDateStr && typeof input === 'string' && (input.includes('T') || input.includes('-'))) {
+    const parsedD = new Date(input);
+    if (!isNaN(parsedD.getTime())) {
+      resolvedDateStr = getISTTodayString(parsedD);
+    }
+  } else if (!targetDateStr && input instanceof Date) {
+    resolvedDateStr = getISTTodayString(input);
+  }
+
+  // Scheduling is strictly restricted to Today or Tomorrow only
+  if (resolvedDateStr !== todayStr && resolvedDateStr !== tomorrowStr) {
     return {
       valid: false,
+      canonical: baseValidation.canonical,
+      error: 'Pickup scheduling is available for today or tomorrow only.',
+    };
+  }
+
+  const isTomorrow = resolvedDateStr === tomorrowStr;
+
+  // If ordering for today, verify the slot has not already passed
+  if (!isTomorrow) {
+    const pastCheck = isPastPickupSlot(baseValidation.canonical, now);
+    if (pastCheck.isPast) {
+      return {
+        valid: false,
+        canonical: baseValidation.canonical,
+        totalMinutes: baseValidation.totalMinutes,
+        displayTime: baseValidation.displayTime,
+        batchLabel: pastCheck.batchLabel,
+        isTomorrow: false,
+        dateStr: resolvedDateStr,
+        error: `Selected pickup slot (${pastCheck.batchLabel}) has already passed for today. Please select a valid future pickup time or schedule for tomorrow.`,
+      };
+    }
+    return {
+      valid: true,
       canonical: baseValidation.canonical,
       totalMinutes: baseValidation.totalMinutes,
       displayTime: baseValidation.displayTime,
       batchLabel: pastCheck.batchLabel,
-      error: `Selected pickup slot (${pastCheck.batchLabel}) has already passed for today. Please select a valid future pickup time.`,
+      isTomorrow: false,
+      dateStr: resolvedDateStr,
     };
   }
 
+  // If ordering for tomorrow, all 8:00 AM - 5:00 PM slots are future and valid
+  const batch = calculate15MinBatch(baseValidation.canonical);
   return {
     valid: true,
     canonical: baseValidation.canonical,
     totalMinutes: baseValidation.totalMinutes,
     displayTime: baseValidation.displayTime,
-    batchLabel: pastCheck.batchLabel,
+    batchLabel: batch.displayLabel,
+    isTomorrow: true,
+    dateStr: resolvedDateStr,
   };
 }
 
@@ -328,9 +385,9 @@ export interface PickupSlotOption {
 
 /**
  * Returns all continuous 15-minute preparation batches across operating hours (8:00 AM to 5:00 PM IST)
- * along with their availability status relative to the current IST time.
+ * along with their availability status relative to the current IST time (or for tomorrow).
  */
-export function getAllDayPickupSlots(now: Date = new Date()): PickupSlotOption[] {
+export function getAllDayPickupSlots(now: Date = new Date(), isTomorrow = false): PickupSlotOption[] {
   const slots: PickupSlotOption[] = [];
   const nowIST = getISTDateParts(now);
   const currentMinutesIST = nowIST.hours * 60 + nowIST.minutes;
@@ -342,7 +399,8 @@ export function getAllDayPickupSlots(now: Date = new Date()): PickupSlotOption[]
     const canonical = `${pad2(h)}:${pad2(m)}`;
     const batch = calculate15MinBatch(canonical);
     const endMinutes = mins + 15;
-    const isPast = endMinutes <= currentMinutesIST;
+    // For tomorrow, slots have not passed yet. For today, check against current IST time.
+    const isPast = isTomorrow ? false : endMinutes <= currentMinutesIST;
 
     slots.push({
       canonical,

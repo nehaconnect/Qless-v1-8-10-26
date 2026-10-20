@@ -51,6 +51,8 @@ import {
   formatPickupTimeDisplay,
   formatCanonicalTo12Hour,
   getISTDateParts,
+  getISTTodayString,
+  getISTTomorrowString,
 } from '@/lib/pickup-time';
 import { QLessLogo } from '@/components/QLessLogo';
 
@@ -205,11 +207,20 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
   // Menu data
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
-  const [cart, setCart] = useState<CartItem[]>([]);
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('qless_customer_cart');
+        if (saved) return JSON.parse(saved);
+      } catch {}
+    }
+    return [];
+  });
   const [isLoadingMenu, setIsLoadingMenu] = useState(true);
   const [isLoadingOrders, setIsLoadingOrders] = useState(true);
 
-  // Time selection for ordering (24-hour internal HH:mm)
+  // Time selection for ordering (24-hour internal HH:mm) & Day (Today vs Tomorrow)
+  const [selectedPickupDay, setSelectedPickupDay] = useState<'TODAY' | 'TOMORROW'>('TODAY');
   const [daySlots, setDaySlots] = useState<PickupSlotOption[]>(() => getAllDayPickupSlots());
   const [selectedTimeStr, setSelectedTimeStr] = useState<string>(() => {
     const slots = getAllDayPickupSlots();
@@ -333,32 +344,52 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
     return () => clearInterval(interval);
   }, [selectedCanteenId]);
 
-  // Refresh pickup slot availability periodically and whenever Cart tab is viewed
+  // Synchronize cart state to localStorage for persistence across reloads/navigation
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem('qless_customer_cart', JSON.stringify(cart));
+      } catch {}
+    }
+  }, [cart]);
+
+  // Refresh pickup slot availability periodically and whenever Cart tab or selected day changes
+  useEffect(() => {
+    const isTomorrow = selectedPickupDay === 'TOMORROW';
     const refreshSlots = () => {
-      const refreshed = getAllDayPickupSlots();
+      const refreshed = getAllDayPickupSlots(new Date(), isTomorrow);
       setDaySlots(refreshed);
-      // If currently selected slot is now in the past, update to next available future slot
-      if (selectedTimeStr) {
-        const check = isPastPickupSlot(selectedTimeStr);
-        if (check.isPast) {
-          const firstValid = refreshed.find(s => !s.isPast);
-          if (firstValid) {
-            setSelectedTimeStr(firstValid.canonical);
-            setCalculatedBatch(firstValid.batchLabel);
+
+      if (isTomorrow) {
+        // For tomorrow, all slots are future; if no time is selected, default to first slot (08:00)
+        if (!selectedTimeStr) {
+          const first = refreshed[0];
+          if (first) {
+            setSelectedTimeStr(first.canonical);
+            setCalculatedBatch(first.batchLabel);
             setTimeValidationError(null);
+          }
+        }
+      } else {
+        // If currently selected slot is now in the past, update to next available future slot
+        if (selectedTimeStr) {
+          const check = isPastPickupSlot(selectedTimeStr);
+          if (check.isPast) {
+            const firstValid = refreshed.find(s => !s.isPast);
+            if (firstValid) {
+              setSelectedTimeStr(firstValid.canonical);
+              setCalculatedBatch(firstValid.batchLabel);
+              setTimeValidationError(null);
+            }
           }
         }
       }
     };
 
-    if (activeTab === 'CART') {
-      refreshSlots();
-    }
-
+    refreshSlots();
     const timer = setInterval(refreshSlots, 30000);
     return () => clearInterval(timer);
-  }, [activeTab, selectedTimeStr]);
+  }, [activeTab, selectedPickupDay]);
 
   // Recalculate assigned 15-min batch on pickup time change & validate future slot
   useEffect(() => {
@@ -366,7 +397,9 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
       setTimeValidationError('Pickup time is required');
       return;
     }
-    const validation = validateFuturePickupTimeCanonical(selectedTimeStr);
+    const isTomorrow = selectedPickupDay === 'TOMORROW';
+    const targetDateStr = isTomorrow ? getISTTomorrowString() : getISTTodayString();
+    const validation = validateFuturePickupTimeCanonical(selectedTimeStr, new Date(), targetDateStr);
     if (!validation.valid) {
       setTimeValidationError(validation.error || 'Invalid pickup time');
       if (validation.canonical) {
@@ -380,7 +413,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
       const batch = calculate15MinBatch(selectedTimeStr);
       setCalculatedBatch(batch.displayLabel);
     }
-  }, [selectedTimeStr]);
+  }, [selectedTimeStr, selectedPickupDay]);
 
   // Canteen Switching
   const handleSelectCanteen = (canteenId: string) => {
@@ -397,10 +430,6 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
   const handleIncrement = (item: MenuItem) => {
     if (!item.isAvailable || item.price === null || item.price === undefined) {
       setErrorMsg(`Cannot add ${item.name}: item is unavailable or price is unlisted.`);
-      return;
-    }
-    if (canteenStatus !== 'OPEN') {
-      setErrorMsg('Canteen is not currently open for new orders.');
       return;
     }
     setCart(prev => {
@@ -500,23 +529,30 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
   const cartItemCount = cart.reduce((sum, ci) => sum + ci.quantity, 0);
 
-  // Helper to resolve dish image
+  // Helper to resolve dish image: strictly prioritizes exact seller-uploaded image from DB
   const getItemImage = (item: MenuItem): string => {
-    if (item.imageUrl) return item.imageUrl;
-    if (ITEM_IMAGE_MAP[item.name]) return ITEM_IMAGE_MAP[item.name];
+    if (item.imageUrl && item.imageUrl.trim().length > 0) {
+      return item.imageUrl.trim();
+    }
+    if (ITEM_IMAGE_MAP[item.name]) {
+      return ITEM_IMAGE_MAP[item.name];
+    }
     return 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80';
   };
 
   // Place Order submission
   const handlePlaceOrder = async () => {
     if (cart.length === 0) return;
-    const validation = validateFuturePickupTimeCanonical(selectedTimeStr);
+    const isTomorrow = selectedPickupDay === 'TOMORROW';
+    const targetDateStr = isTomorrow ? getISTTomorrowString() : getISTTodayString();
+    const validation = validateFuturePickupTimeCanonical(selectedTimeStr, new Date(), targetDateStr);
     if (!validation.valid) {
       setErrorMsg(validation.error || 'Please select a valid future pickup time between 8:00 AM and 5:00 PM IST');
       return;
     }
-    if (canteenStatus !== 'OPEN') {
-      setErrorMsg(`Canteen is currently ${canteenStatus}. Orders cannot be placed at this time.`);
+    // Only check current-day OPEN status if ordering for today!
+    if (!isTomorrow && canteenStatus !== 'OPEN') {
+      setErrorMsg(`Canteen is currently ${canteenStatus}. Orders for today cannot be placed at this time. You can schedule an order for tomorrow.`);
       return;
     }
 
@@ -525,8 +561,9 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
     setSuccessMsg(null);
 
     try {
+      const fullPickupIso = `${targetDateStr}T${selectedTimeStr}:00+05:30`;
       const payload = {
-        exactPickupTime: selectedTimeStr,
+        exactPickupTime: fullPickupIso,
         items: cart.map(ci => ({
           menuItemId: ci.item.id,
           quantity: ci.quantity,
@@ -546,6 +583,9 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
       }
 
       setCart([]);
+      try {
+        localStorage.removeItem('qless_customer_cart');
+      } catch {}
       setSuccessMsg(`Order #${data.order.orderNumber} placed successfully! Please wait for seller acceptance.`);
       setActiveTab('ORDERS');
       fetchOrders(false);
@@ -723,13 +763,28 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
       return updated;
     });
 
-    // Refresh day slots and ensure selected pickup slot is a valid future slot
-    const refreshedSlots = getAllDayPickupSlots();
-    setDaySlots(refreshedSlots);
-    const firstValid = refreshedSlots.find(s => !s.isPast);
-    if (firstValid && (!selectedTimeStr || isPastPickupSlot(selectedTimeStr).isPast)) {
-      setSelectedTimeStr(firstValid.canonical);
-      setCalculatedBatch(firstValid.batchLabel);
+    // Refresh day slots and ensure selected pickup slot is a valid future slot (Today or Tomorrow)
+    const refreshedToday = getAllDayPickupSlots(new Date(), false);
+    const firstValidToday = refreshedToday.find(s => !s.isPast);
+
+    if (firstValidToday) {
+      setSelectedPickupDay('TODAY');
+      setDaySlots(refreshedToday);
+      if (!selectedTimeStr || isPastPickupSlot(selectedTimeStr).isPast) {
+        setSelectedTimeStr(firstValidToday.canonical);
+        setCalculatedBatch(firstValidToday.batchLabel);
+      }
+      setTimeValidationError(null);
+    } else {
+      // If all today's slots have passed, switch to Tomorrow automatically
+      setSelectedPickupDay('TOMORROW');
+      const refreshedTomorrow = getAllDayPickupSlots(new Date(), true);
+      setDaySlots(refreshedTomorrow);
+      const firstValidTomorrow = refreshedTomorrow[0];
+      if (firstValidTomorrow) {
+        setSelectedTimeStr(firstValidTomorrow.canonical);
+        setCalculatedBatch(firstValidTomorrow.batchLabel);
+      }
       setTimeValidationError(null);
     }
 
@@ -747,15 +802,32 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
     }
   };
 
-  // Active orders: all statuses except COLLECTED, CANCELLED, REJECTED, EXPIRED (sorted newest first)
-  const activeOrders = ordersList
-    .filter(o => !['COLLECTED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(o.status))
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  // Helper to determine if an unresolved order is past its 2-hour post-pickup grace period
+  const isPast2HourGrace = (order: Order) => {
+    if (!order.exactPickupTime) return false;
+    const pickupEpoch = new Date(order.exactPickupTime).getTime();
+    if (isNaN(pickupEpoch)) return false;
+    return Date.now() - pickupEpoch > 2 * 60 * 60 * 1000;
+  };
 
-  // Previous orders: collected, cancelled, rejected, expired orders (sorted newest first)
+  // Active orders: unresolved orders whose scheduled pickup time + 2-hour grace period has not elapsed
+  const activeOrders = ordersList
+    .filter(o => !['COLLECTED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(o.status) && !isPast2HourGrace(o))
+    .sort((a, b) => {
+      const timeB = b.exactPickupTime ? new Date(b.exactPickupTime).getTime() : new Date(b.createdAt).getTime();
+      const timeA = a.exactPickupTime ? new Date(a.exactPickupTime).getTime() : new Date(a.createdAt).getTime();
+      return timeB - timeA;
+    });
+
+  // Previous orders: collected, cancelled, rejected, expired orders OR orders past the 2-hour grace period
+  // Kept in strict chronological order using the scheduled pickup date/time (falling back to createdAt)
   const previousOrders = ordersList
-    .filter(o => ['COLLECTED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(o.status))
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    .filter(o => ['COLLECTED', 'CANCELLED', 'REJECTED', 'EXPIRED'].includes(o.status) || isPast2HourGrace(o))
+    .sort((a, b) => {
+      const timeB = b.exactPickupTime ? new Date(b.exactPickupTime).getTime() : new Date(b.createdAt).getTime();
+      const timeA = a.exactPickupTime ? new Date(a.exactPickupTime).getTime() : new Date(a.createdAt).getTime();
+      return timeB - timeA;
+    });
 
   const unreadNotificationsCount = notificationsList.filter(n => !n.isRead).length;
 
@@ -1278,13 +1350,13 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
               {/* Center: Search Field */}
               <div className="relative flex-1 max-w-lg">
-                <Search className="w-4 h-4 text-[#64839A] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <Search className="w-4 h-4 text-[#64839A] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="text"
-                  placeholder="Search menu items..."
+                  placeholder="आज क्या खाएं?"
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-[#64839A] focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
+                  className="w-full pl-9 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
                 />
                 {searchQuery && (
                   <button
@@ -1328,13 +1400,13 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
               {/* Row 1: Search Box + Grid & List Buttons immediately to the right */}
               <div className="flex items-center gap-2 w-full">
                 <div className="relative flex-1">
-                  <Search className="w-4 h-4 text-[#64839A] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <Search className="w-4 h-4 text-[#64839A] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
                     type="text"
-                    placeholder="Search menu items..."
+                    placeholder="आज क्या खाएं?"
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
-                    className="w-full pl-9 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-[#64839A] focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
+                    className="w-full pl-9 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
                   />
                   {searchQuery && (
                     <button
@@ -1527,28 +1599,39 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                         </div>
                       </div>
 
-                      {/* Stepper at Bottom */}
-                      <div className="mt-3 bg-[#F1F6F4] border border-[#BFEBDD]/60 rounded-xl p-1 flex items-center justify-between">
-                        <button
-                          onClick={() => handleDecrement(item.id)}
-                          disabled={!inCart || inCart.quantity === 0}
-                          className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-white text-[#073653] flex items-center justify-center font-bold hover:bg-slate-100 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed shadow-xs cursor-pointer"
-                          aria-label="Decrease quantity"
-                        >
-                          <Minus className="w-3.5 h-3.5" />
-                        </button>
-                        <span className="text-xs sm:text-sm font-black text-[#073653] px-1 sm:px-2 font-mono">
-                          {inCart ? inCart.quantity : 0}
-                        </span>
+                      {/* Initial "+ Add" button, replacing with Stepper when inCart */}
+                      {!inCart || inCart.quantity === 0 ? (
                         <button
                           onClick={() => handleIncrement(item)}
-                          disabled={canteenStatus !== 'OPEN' || !item.isAvailable || isPriceNotFixed}
-                          className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-[#00B894] hover:bg-[#00a382] text-white flex items-center justify-center font-bold transition text-sm disabled:opacity-40 disabled:cursor-not-allowed shadow-xs cursor-pointer"
-                          aria-label="Increase quantity"
+                          disabled={!item.isAvailable || isPriceNotFixed}
+                          className="mt-3 w-full py-2 px-3 rounded-xl bg-[#00B894] hover:bg-[#00a382] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer min-h-[34px]"
+                          aria-label={`Add ${item.name} to cart`}
                         >
                           <Plus className="w-3.5 h-3.5" />
+                          <span>Add</span>
                         </button>
-                      </div>
+                      ) : (
+                        <div className="mt-3 bg-[#F1F6F4] border border-[#BFEBDD]/60 rounded-xl p-1 flex items-center justify-between min-h-[34px]">
+                          <button
+                            onClick={() => handleDecrement(item.id)}
+                            className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-white text-[#073653] flex items-center justify-center font-bold hover:bg-slate-100 transition text-sm shadow-xs cursor-pointer"
+                            aria-label="Decrease quantity"
+                          >
+                            <Minus className="w-3.5 h-3.5" />
+                          </button>
+                          <span className="text-xs sm:text-sm font-black text-[#073653] px-1 sm:px-2 font-mono">
+                            {inCart.quantity}
+                          </span>
+                          <button
+                            onClick={() => handleIncrement(item)}
+                            disabled={!item.isAvailable || isPriceNotFixed}
+                            className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-[#00B894] hover:bg-[#00a382] text-white flex items-center justify-center font-bold transition text-sm disabled:opacity-40 disabled:cursor-not-allowed shadow-xs cursor-pointer"
+                            aria-label="Increase quantity"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1597,27 +1680,38 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
                         {/* Right: Stepper + Favorite Heart */}
                         <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-                          <div className="flex items-center gap-1 bg-[#F1F6F4] rounded-xl p-1 border border-[#BFEBDD]/60">
-                            <button
-                              onClick={() => handleDecrement(item.id)}
-                              disabled={!inCart || inCart.quantity === 0}
-                              className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-white flex items-center justify-center text-[#073653] hover:bg-slate-100 font-bold disabled:opacity-30 disabled:cursor-not-allowed shadow-xs cursor-pointer"
-                              aria-label="Decrease quantity"
-                            >
-                              <Minus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
-                            </button>
-                            <span className="text-xs sm:text-sm font-black text-[#073653] px-2 min-w-[20px] text-center font-mono">
-                              {inCart ? inCart.quantity : 0}
-                            </span>
+                          {!inCart || inCart.quantity === 0 ? (
                             <button
                               onClick={() => handleIncrement(item)}
-                              disabled={canteenStatus !== 'OPEN' || !item.isAvailable || isPriceNotFixed}
-                              className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-[#00B894] hover:bg-[#00a382] text-white flex items-center justify-center font-bold transition shadow-xs disabled:opacity-40 cursor-pointer"
-                              aria-label="Increase quantity"
+                              disabled={!item.isAvailable || isPriceNotFixed}
+                              className="py-1.5 px-3 rounded-xl bg-[#00B894] hover:bg-[#00a382] text-white text-xs font-bold flex items-center justify-center gap-1 shadow-xs transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer min-h-[32px]"
+                              aria-label={`Add ${item.name} to cart`}
                             >
-                              <Plus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>Add</span>
                             </button>
-                          </div>
+                          ) : (
+                            <div className="flex items-center gap-1 bg-[#F1F6F4] rounded-xl p-1 border border-[#BFEBDD]/60 min-h-[32px]">
+                              <button
+                                onClick={() => handleDecrement(item.id)}
+                                className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-white flex items-center justify-center text-[#073653] hover:bg-slate-100 font-bold shadow-xs cursor-pointer"
+                                aria-label="Decrease quantity"
+                              >
+                                <Minus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                              </button>
+                              <span className="text-xs sm:text-sm font-black text-[#073653] px-2 min-w-[20px] text-center font-mono">
+                                {inCart.quantity}
+                              </span>
+                              <button
+                                onClick={() => handleIncrement(item)}
+                                disabled={!item.isAvailable || isPriceNotFixed}
+                                className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-[#00B894] hover:bg-[#00a382] text-white flex items-center justify-center font-bold transition shadow-xs disabled:opacity-40 cursor-pointer"
+                                aria-label="Increase quantity"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
 
                           <button
                             onClick={() => toggleFavorite(item.id)}
@@ -1822,10 +1916,47 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                     </span>
                   </div>
 
-                  {daySlots.every(s => s.isPast) ? (
-                    <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold flex items-center gap-2">
-                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
-                      <span>All pickup slots for today have ended. IP Canteen orders are closed until tomorrow 8:00 AM IST.</span>
+                  {/* Today vs Tomorrow Day Toggle */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPickupDay('TODAY')}
+                      className={`flex-1 py-2 px-3 rounded-xl text-xs font-extrabold transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                        selectedPickupDay === 'TODAY'
+                          ? 'bg-[#0B725C] text-white shadow-xs'
+                          : 'bg-white text-[#073653] border border-[#BFEBDD] hover:bg-slate-50'
+                      }`}
+                    >
+                      <span>Today</span>
+                      <span className="text-[10px] opacity-80">({getISTTodayString()})</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPickupDay('TOMORROW')}
+                      className={`flex-1 py-2 px-3 rounded-xl text-xs font-extrabold transition cursor-pointer flex items-center justify-center gap-1.5 ${
+                        selectedPickupDay === 'TOMORROW'
+                          ? 'bg-[#0B725C] text-white shadow-xs'
+                          : 'bg-white text-[#073653] border border-[#BFEBDD] hover:bg-slate-50'
+                      }`}
+                    >
+                      <span>Tomorrow</span>
+                      <span className="text-[10px] opacity-80">({getISTTomorrowString()})</span>
+                    </button>
+                  </div>
+
+                  {selectedPickupDay === 'TODAY' && daySlots.every(s => s.isPast) ? (
+                    <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-bold space-y-2">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>All pickup slots for today have ended.</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedPickupDay('TOMORROW')}
+                        className="px-3 py-1.5 rounded-lg bg-[#0B725C] text-white text-xs font-bold hover:bg-[#095E4B] transition cursor-pointer"
+                      >
+                        Order for Tomorrow ({getISTTomorrowString()}) →
+                      </button>
                     </div>
                   ) : (
                     <div className="space-y-2">
@@ -1833,7 +1964,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                         {/* 15-Minute Slot Selector Dropdown */}
                         <div>
                           <label className="text-[11px] font-bold text-[#64839A] block mb-1">
-                            Available 15-Minute Slots Today
+                            Available 15-Minute Slots ({selectedPickupDay === 'TOMORROW' ? 'Tomorrow' : 'Today'})
                           </label>
                           <select
                             value={selectedTimeStr}
@@ -1851,7 +1982,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                         {/* Precise Target Time (HH:mm) */}
                         <div>
                           <label className="text-[11px] font-bold text-[#64839A] block mb-1">
-                            Exact Pickup Time
+                            Exact Pickup Time ({selectedPickupDay === 'TOMORROW' ? 'Tomorrow' : 'Today'})
                           </label>
                           <input
                             type="time"
@@ -1892,7 +2023,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
                   <button
                     onClick={handlePlaceOrder}
-                    disabled={isSubmittingOrder || canteenStatus !== 'OPEN' || Boolean(timeValidationError)}
+                    disabled={isSubmittingOrder || (selectedPickupDay === 'TODAY' && canteenStatus !== 'OPEN') || Boolean(timeValidationError)}
                     className="w-full py-3.5 min-h-[48px] px-4 rounded-xl text-white font-bold text-sm bg-[#0B725C] hover:bg-[#095E4B] shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     {isSubmittingOrder ? (
@@ -2145,13 +2276,18 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                           <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide border ${
                             order.status === 'COLLECTED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
                             order.status === 'CANCELLED' ? 'bg-slate-50 text-slate-700 border-slate-200' :
-                            order.status === 'EXPIRED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                            (order.status === 'EXPIRED' || isPast2HourGrace(order)) ? (
+                              order.paymentStatus === 'PAID' ? 'bg-amber-50 text-amber-800 border-amber-200' : 'bg-rose-50 text-rose-700 border-rose-200'
+                            ) :
                             order.status === 'REJECTED' ? 'bg-rose-50 text-rose-700 border-rose-200' :
                             'bg-slate-50 text-slate-700 border-slate-200'
                           }`}>
                             {order.status === 'COLLECTED' ? '✓ Collected' :
                              order.status === 'CANCELLED' ? 'Cancelled' :
-                             order.status === 'EXPIRED' ? '⚠ Not Collected' :
+                             (order.status === 'EXPIRED' || isPast2HourGrace(order)) ? (
+                               order.paymentStatus === 'PAID' ? 'Not Collected' : 'No Payment'
+                             ) :
+                             order.status === 'REJECTED' ? 'Rejected' :
                              order.status}
                           </span>
                         </div>
@@ -2248,10 +2384,18 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                         </div>
 
                         {/* Notice for uncollected / expired orders */}
-                        {order.status === 'EXPIRED' && (
-                          <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800">
+                        {(order.status === 'EXPIRED' || isPast2HourGrace(order)) && (
+                          <div className={`p-3 rounded-xl border text-xs ${
+                            order.paymentStatus === 'PAID'
+                              ? 'bg-amber-50 border-amber-200 text-amber-800'
+                              : 'bg-rose-50 border-rose-200 text-rose-700'
+                          }`}>
                             <span className="font-bold">Notice: </span>
-                            <span>This order was marked as not collected because it remained uncollected 2 hours past the scheduled pickup time.</span>
+                            <span>
+                              {order.paymentStatus === 'PAID'
+                                ? 'This paid order was marked as Not Collected because it was not picked up within 2 hours after the scheduled pickup time.'
+                                : 'This order was closed with No Payment because payment was not completed within 2 hours after the scheduled pickup time.'}
+                            </span>
                           </div>
                         )}
 
