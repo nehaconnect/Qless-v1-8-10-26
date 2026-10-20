@@ -393,7 +393,40 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
     fetchMenu(false, canteenId);
   };
 
-  // Cart operations
+  // Cart operations with single-step state transitions (+1, -1)
+  const handleIncrement = (item: MenuItem) => {
+    if (!item.isAvailable || item.price === null || item.price === undefined) {
+      setErrorMsg(`Cannot add ${item.name}: item is unavailable or price is unlisted.`);
+      return;
+    }
+    if (canteenStatus !== 'OPEN') {
+      setErrorMsg('Canteen is not currently open for new orders.');
+      return;
+    }
+    setCart(prev => {
+      const existing = prev.find(ci => ci.item.id === item.id);
+      if (existing) {
+        return prev.map(ci =>
+          ci.item.id === item.id ? { ...ci, quantity: ci.quantity + 1 } : ci
+        );
+      }
+      return [...prev, { item, quantity: 1 }];
+    });
+  };
+
+  const handleDecrement = (itemId: string) => {
+    setCart(prev => {
+      const target = prev.find(ci => ci.item.id === itemId);
+      if (!target) return prev;
+      if (target.quantity <= 1) {
+        return prev.filter(ci => ci.item.id !== itemId);
+      }
+      return prev.map(ci =>
+        ci.item.id === itemId ? { ...ci, quantity: ci.quantity - 1 } : ci
+      );
+    });
+  };
+
   const addToCart = (item: MenuItem, qty = 1) => {
     if (!item.isAvailable || item.price === null || item.price === undefined) {
       setErrorMsg(`Cannot add ${item.name}: item is unavailable or price is unlisted.`);
@@ -411,17 +444,17 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
   };
 
   const updateCartQuantity = (itemId: string, delta: number) => {
-    setCart(prev => {
-      const target = prev.find(ci => ci.item.id === itemId);
-      if (!target) return prev;
-      const newQty = target.quantity + delta;
-      if (newQty <= 0) {
-        return prev.filter(ci => ci.item.id !== itemId);
-      }
-      return prev.map(ci =>
-        ci.item.id === itemId ? { ...ci, quantity: newQty } : ci
-      );
-    });
+    if (delta > 0) {
+      setCart(prev => {
+        const target = prev.find(ci => ci.item.id === itemId);
+        if (!target) return prev;
+        return prev.map(ci =>
+          ci.item.id === itemId ? { ...ci, quantity: ci.quantity + 1 } : ci
+        );
+      });
+    } else {
+      handleDecrement(itemId);
+    }
   };
 
   const removeFromCart = (itemId: string) => {
@@ -430,6 +463,34 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
   const clearCart = () => {
     setCart([]);
+  };
+
+  // Customer Pre-Payment Cancellation
+  const handleCancelOrder = async (orderId: string) => {
+    if (!window.confirm('Are you sure you want to cancel this order?')) {
+      return;
+    }
+    setActionLoading(prev => ({ ...prev, [orderId]: 'CANCELLING' }));
+    setErrorMsg(null);
+    try {
+      const res = await fetch(`/api/orders/${orderId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'CUSTOMER_CANCEL', reason: 'Cancelled by customer before payment' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to cancel order');
+      setSuccessMsg('Order cancelled successfully.');
+      fetchOrders(false);
+    } catch (err: any) {
+      setErrorMsg(err.message);
+    } finally {
+      setActionLoading(prev => {
+        const copy = { ...prev };
+        delete copy[orderId];
+        return copy;
+      });
+    }
   };
 
   const cartTotal = cart.reduce((sum, ci) => {
@@ -1048,28 +1109,8 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
               </div>
             </div>
 
-            {/* Right Header: Desktop Search + Notifications + Customer Profile (Visible & Accessible on mobile!) */}
+            {/* Right Header: Notifications + Customer Profile (Visible & Accessible on mobile & desktop) */}
             <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
-              {/* Desktop Search Field */}
-              <div className="relative hidden lg:block w-56 xl:w-64">
-                <Search className="w-4 h-4 text-[#64839A] absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="Search menu items..."
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-[#64839A] focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-
               {/* Notification Bell */}
               <button
                 onClick={() => setActiveTab('NOTIFICATIONS')}
@@ -1174,26 +1215,6 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
               </div>
             </div>
           </div>
-
-          {/* Mobile Search Bar (Only shown on screen < lg, neat and full width without overlapping) */}
-          <div className="relative block lg:hidden w-full">
-            <Search className="w-4 h-4 text-[#64839A] absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Search menu items..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-[#64839A] focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
         </header>
 
         {/* Global Feedback Banners */}
@@ -1222,13 +1243,141 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
         {/* ========================================================================= */}
         {activeTab === 'MENU' && (
           <div className="space-y-4">
-            {/* 5. MENU CONTROLS ROW — Compact, Responsive, Grouped Toolbar */}
-            <div className="flex flex-wrap items-center justify-between gap-2.5">
-              {/* Left Group: Menu Mode Tabs (Segmented Control) */}
-              <div className="inline-flex p-1 bg-white/90 backdrop-blur-sm rounded-full border border-[#BFEBDD]/70 shadow-sm" role="tablist">
+            {/* DESKTOP CONTROLS ROW (lg and above, matching Desktop Reference Image 2) */}
+            <div className="hidden lg:flex items-center justify-between gap-4">
+              {/* Left: Today's Menu / Full Menu Tabs */}
+              <div className="inline-flex p-1 bg-white/90 backdrop-blur-sm rounded-full border border-[#BFEBDD]/70 shadow-sm shrink-0" role="tablist">
                 <button
                   onClick={() => setMenuMode('TODAY')}
-                  className={`px-3.5 sm:px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 min-h-[36px] ${
+                  className={`px-4 py-2 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 min-h-[38px] ${
+                    menuMode === 'TODAY'
+                      ? 'bg-[#0B725C] text-white shadow-sm'
+                      : 'text-[#073653] hover:text-[#0B725C]'
+                  }`}
+                  role="tab"
+                  aria-selected={menuMode === 'TODAY'}
+                >
+                  <Sun className="w-3.5 h-3.5" />
+                  <span>Today's Menu</span>
+                  <ChevronRight className="w-3.5 h-3.5 ml-0.5 opacity-80" />
+                </button>
+                <button
+                  onClick={() => setMenuMode('ALL')}
+                  className={`px-4 py-2 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 min-h-[38px] ${
+                    menuMode === 'ALL'
+                      ? 'bg-[#0B725C] text-white shadow-sm'
+                      : 'text-[#073653] hover:text-[#0B725C]'
+                  }`}
+                  role="tab"
+                  aria-selected={menuMode === 'ALL'}
+                >
+                  <Utensils className="w-3.5 h-3.5" />
+                  <span>Full Menu</span>
+                </button>
+              </div>
+
+              {/* Center: Search Field */}
+              <div className="relative flex-1 max-w-lg">
+                <Search className="w-4 h-4 text-[#64839A] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search menu items..."
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-[#64839A] focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Right: Grid / List View Toggle */}
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => setViewMode('GRID')}
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all shadow-xs ${
+                    viewMode === 'GRID'
+                      ? 'bg-[#00897B] text-white'
+                      : 'bg-white border border-[#BFEBDD]/80 text-[#64839A] hover:text-[#073653]'
+                  }`}
+                  aria-label="Grid view"
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setViewMode('LIST')}
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all shadow-xs ${
+                    viewMode === 'LIST'
+                      ? 'bg-[#00897B] text-white'
+                      : 'bg-white border border-[#BFEBDD]/80 text-[#64839A] hover:text-[#073653]'
+                  }`}
+                  aria-label="List view"
+                >
+                  <List className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* MOBILE CONTROLS (below lg, matching Mobile Reference Image 1) */}
+            <div className="flex flex-col gap-2.5 lg:hidden">
+              {/* Row 1: Search Box + Grid & List Buttons immediately to the right */}
+              <div className="flex items-center gap-2 w-full">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 text-[#64839A] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    placeholder="Search menu items..."
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-[#64839A] focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
+                  />
+                  {searchQuery && (
+                    <button
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Compact Grid and List Toggle to right of search */}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <button
+                    onClick={() => setViewMode('GRID')}
+                    className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all shadow-xs ${
+                      viewMode === 'GRID'
+                        ? 'bg-[#00897B] text-white'
+                        : 'bg-white border border-[#BFEBDD]/80 text-[#64839A] hover:text-[#073653]'
+                    }`}
+                    aria-label="Grid view"
+                  >
+                    <LayoutGrid className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setViewMode('LIST')}
+                    className={`w-9 h-9 rounded-xl flex items-center justify-center transition-all shadow-xs ${
+                      viewMode === 'LIST'
+                        ? 'bg-[#00897B] text-white'
+                        : 'bg-white border border-[#BFEBDD]/80 text-[#64839A] hover:text-[#073653]'
+                    }`}
+                    aria-label="List view"
+                  >
+                    <List className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Row 2: Today's Menu & Full Menu Tabs */}
+              <div className="inline-flex p-1 bg-white/90 backdrop-blur-sm rounded-full border border-[#BFEBDD]/70 shadow-sm self-start" role="tablist">
+                <button
+                  onClick={() => setMenuMode('TODAY')}
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 min-h-[34px] ${
                     menuMode === 'TODAY'
                       ? 'bg-[#0B725C] text-white shadow-xs'
                       : 'text-[#073653] hover:text-[#0B725C]'
@@ -1241,7 +1390,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                 </button>
                 <button
                   onClick={() => setMenuMode('ALL')}
-                  className={`px-3.5 sm:px-4 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 min-h-[36px] ${
+                  className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 min-h-[34px] ${
                     menuMode === 'ALL'
                       ? 'bg-[#0B725C] text-white shadow-xs'
                       : 'text-[#073653] hover:text-[#0B725C]'
@@ -1251,34 +1400,6 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                 >
                   <Utensils className="w-3.5 h-3.5" />
                   <span>Full Menu</span>
-                </button>
-              </div>
-
-              {/* Right Group: Grid View vs List View Buttons (Segmented Control) */}
-              <div className="inline-flex p-1 bg-white/90 backdrop-blur-sm rounded-full border border-[#BFEBDD]/70 shadow-sm">
-                <button
-                  onClick={() => setViewMode('GRID')}
-                  className={`px-3 sm:px-3.5 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 min-h-[36px] ${
-                    viewMode === 'GRID'
-                      ? 'bg-[#073653] text-white shadow-xs'
-                      : 'text-[#64839A] hover:text-[#073653]'
-                  }`}
-                  aria-label="Grid view"
-                >
-                  <LayoutGrid className="w-3.5 h-3.5" />
-                  <span>Grid</span>
-                </button>
-                <button
-                  onClick={() => setViewMode('LIST')}
-                  className={`px-3 sm:px-3.5 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 min-h-[36px] ${
-                    viewMode === 'LIST'
-                      ? 'bg-[#073653] text-white shadow-xs'
-                      : 'text-[#64839A] hover:text-[#073653]'
-                  }`}
-                  aria-label="List view"
-                >
-                  <List className="w-3.5 h-3.5" />
-                  <span>List</span>
                 </button>
               </div>
             </div>
@@ -1295,7 +1416,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                   onClick={() => setSelectedCategory('ALL')}
                   className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all shadow-sm ${
                     selectedCategory === 'ALL'
-                      ? 'bg-[#00B894] text-white'
+                      ? 'bg-[#00897B] text-white'
                       : 'bg-white/90 text-[#073653] border border-[#BFEBDD]/60 hover:bg-[#DFF3E8]/50'
                   }`}
                 >
@@ -1315,7 +1436,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                       onClick={() => setSelectedCategory(cat.id)}
                       className={`px-4 py-2 rounded-full text-xs font-bold whitespace-nowrap transition-all shadow-sm flex items-center gap-1.5 ${
                         selectedCategory === cat.id
-                          ? 'bg-[#0B725C] text-white'
+                          ? 'bg-[#00897B] text-white'
                           : 'bg-white/90 text-[#073653] border border-[#BFEBDD]/60 hover:bg-[#DFF3E8]/50'
                       }`}
                     >
@@ -1338,12 +1459,12 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
             {/* SKELETON LOADING STATE */}
             {isLoadingMenu && menuItems.length === 0 ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 animate-pulse">
-                {[...Array(8)].map((_, i) => (
-                  <div key={i} className="bg-white/90 rounded-[24px] border border-[#F2ECE4] p-5 h-56 space-y-4">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3.5 sm:gap-4 animate-pulse">
+                {[...Array(12)].map((_, i) => (
+                  <div key={i} className="bg-white/90 rounded-[20px] border border-[#F2ECE4] p-3 h-56 space-y-3">
+                    <div className="h-28 bg-slate-100 rounded-xl w-full" />
+                    <div className="h-4 bg-slate-200 rounded w-2/3" />
                     <div className="h-4 bg-slate-200 rounded w-1/3" />
-                    <div className="h-6 bg-slate-200 rounded w-2/3" />
-                    <div className="h-20 bg-slate-100 rounded-2xl w-full" />
                   </div>
                 ))}
               </div>
@@ -1355,143 +1476,78 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
               </div>
             ) : viewMode === 'GRID' ? (
               /* ========================================================= */
-              /* 6. GRID VIEW MATCHING REFERENCE 1 (Strictly 4 Columns Max) */
+              /* 6. GRID VIEW MATCHING REFERENCES (2 Cols Mobile, 6 Cols Desktop) */
               /* ========================================================= */
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-5 items-stretch">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 items-stretch">
                 {filteredItems.map(item => {
                   const inCart = cart.find(ci => ci.item.id === item.id);
                   const isPriceNotFixed = item.price === null || item.price === undefined;
-                  const catName = categories.find(c => c.id === item.categoryId)?.name || 'Canteen Special';
                   const isFav = favorites.has(item.id);
                   const dishImage = getItemImage(item);
 
                   return (
                     <div
                       key={item.id}
-                      className="bg-[#FFFDF9] rounded-[24px] p-4 sm:p-4.5 border border-[#F2ECE4] shadow-[0_4px_16px_rgba(7,54,83,0.04)] hover:shadow-[0_8px_24px_rgba(7,54,83,0.08)] transition-all flex flex-col justify-between h-full relative group"
+                      className="bg-white rounded-[20px] p-3 border border-[#F2ECE4] shadow-[0_2px_8px_rgba(7,54,83,0.04)] hover:shadow-[0_4px_16px_rgba(7,54,83,0.08)] transition-all flex flex-col justify-between h-full relative group"
                     >
-                      <div className="flex-1 flex flex-col justify-between">
-                        {/* Top Header Row of Card */}
-                        <div className="flex items-center justify-between gap-2 pb-1.5 h-6">
-                          <div className="flex items-center gap-1.5 overflow-hidden">
-                            <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                              item.isVegetarian ? 'bg-[#00B894]' : 'bg-rose-500'
-                            }`} />
-                            <span className="text-[11px] font-bold uppercase tracking-wider text-[#64839A] truncate">
-                              {catName}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-extrabold text-[15px] tracking-tight text-[#0284C7] shrink-0">
-                              {isPriceNotFixed ? 'Price not fixed' : `₹${parseFloat(item.price as string).toFixed(2)}`}
-                            </span>
-                            <button
-                              onClick={() => toggleFavorite(item.id)}
-                              className="p-1 text-slate-300 hover:text-rose-500 transition cursor-pointer"
-                              aria-label="Add to favorites"
-                            >
-                              <Heart className={`w-4 h-4 ${isFav ? 'fill-rose-500 text-rose-500' : ''}`} />
-                            </button>
-                          </div>
+                      <div>
+                        {/* Food Image with Floating Favorite Heart */}
+                        <div className="relative w-full aspect-square sm:aspect-[4/3] rounded-xl overflow-hidden bg-slate-50 border border-[#F2ECE4]/80">
+                          <img
+                            src={dishImage}
+                            alt={item.name}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            loading="lazy"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80';
+                            }}
+                          />
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleFavorite(item.id);
+                            }}
+                            className="absolute top-2 right-2 p-1.5 rounded-full bg-white/90 backdrop-blur-sm text-slate-300 hover:text-rose-500 shadow-xs transition cursor-pointer"
+                            aria-label="Add to favorites"
+                          >
+                            <Heart className={`w-3.5 h-3.5 ${isFav ? 'fill-rose-500 text-rose-500' : 'text-[#64839A]'}`} />
+                          </button>
                         </div>
 
-                        {/* Item Details & Dish Image Row (Tightly spaced, no empty gap) */}
-                        <div className="py-2 flex items-start justify-between gap-3">
-                          <div className="flex-1 min-w-0 pr-1 flex flex-col justify-between">
-                            <div>
-                              <h3 className="text-[16px] font-black text-[#073653] leading-snug tracking-tight truncate" title={item.name}>
-                                {item.name}
-                              </h3>
-                              {item.dailyCapacity && (
-                                <p className="text-[11px] text-[#8BA3B5] font-medium mt-0.5">
-                                  Limit: {item.dailyCapacity}/day
-                                </p>
-                              )}
-                              {item.description && (
-                                <p className="text-xs text-[#64839A] line-clamp-2 mt-1 leading-relaxed">
-                                  {item.description}
-                                </p>
-                              )}
-                            </div>
-
-                            <div className="mt-2.5">
-                              <span className={`text-xs font-bold block mb-0.5 ${
-                                item.isAvailable && !isPriceNotFixed ? 'text-[#073653]' : 'text-slate-400'
-                              }`}>
-                                {isPriceNotFixed ? 'Unavailable' : item.isAvailable ? 'In Stock' : 'Sold Out'}
-                              </span>
-                              <span
-                                className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider inline-block ${
-                                  item.isAvailable && !isPriceNotFixed
-                                    ? 'bg-[#DFF7F2] text-[#009E7E]'
-                                    : 'bg-slate-100 text-slate-400'
-                                }`}
-                              >
-                                {item.isAvailable && !isPriceNotFixed ? 'AVAILABLE' : 'OFF'}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* Square food image container without floating plus icon */}
-                          <div className="relative w-20 h-20 sm:w-22 sm:h-22 rounded-2xl bg-white border border-[#F2ECE4] shadow-sm shrink-0 flex items-center justify-center overflow-hidden p-1.5">
-                            <img
-                              src={dishImage}
-                              alt={item.name}
-                              className="w-full h-full object-contain group-hover:scale-105 transition-transform duration-300"
-                              loading="lazy"
-                              onError={(e) => {
-                                (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80';
-                              }}
-                            />
+                        {/* Title & Price */}
+                        <div className="mt-2.5">
+                          <h3 className="font-extrabold text-sm sm:text-base text-[#073653] leading-snug tracking-tight truncate" title={item.name}>
+                            {item.name}
+                          </h3>
+                          <div className="mt-0.5">
+                            <span className="font-black text-sm sm:text-base text-[#0284C7]">
+                              {isPriceNotFixed ? 'Price not fixed' : `₹${parseFloat(item.price as string).toFixed(2)}`}
+                            </span>
                           </div>
                         </div>
                       </div>
 
-                      {/* Card Bottom Row: Peach/Cream Action Bar */}
-                      <div className="mt-3 bg-[#FFF7F0] border border-[#FDE8D7] rounded-xl px-3 py-1.5 flex items-center justify-between gap-2">
-                        {isPriceNotFixed ? (
-                          <span className="text-xs font-bold text-[#64839A] italic">Price not fixed</span>
-                        ) : (
-                          <span className="text-sm font-extrabold text-[#073653]">
-                            ₹{parseFloat(item.price as string).toFixed(2)}
-                          </span>
-                        )}
-
-                        {isPriceNotFixed ? (
-                          <span className="text-[10px] font-extrabold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-lg">
-                            Unavailable
-                          </span>
-                        ) : !item.isAvailable ? (
-                          <span className="text-[10px] font-extrabold text-rose-600 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200/60">
-                            Sold Out
-                          </span>
-                        ) : inCart ? (
-                          <div className="flex items-center gap-1.5 bg-white rounded-lg p-0.5 border border-[#BFEBDD]">
-                            <button
-                              onClick={() => updateCartQuantity(item.id, inCart.quantity - 1)}
-                              className="w-6 h-6 rounded-md bg-[#DFF3E8] text-[#073653] font-bold flex items-center justify-center hover:bg-[#BFEBDD] transition text-xs"
-                            >
-                              -
-                            </button>
-                            <span className="px-1.5 font-mono text-xs font-black text-[#073653]">{inCart.quantity}</span>
-                            <button
-                              onClick={() => updateCartQuantity(item.id, inCart.quantity + 1)}
-                              disabled={canteenStatus !== 'OPEN'}
-                              className="w-6 h-6 rounded-md bg-[#00B894] text-white font-bold flex items-center justify-center hover:bg-[#00a382] transition text-xs disabled:opacity-40"
-                            >
-                              +
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => addToCart(item)}
-                            disabled={canteenStatus !== 'OPEN'}
-                            className="px-4 py-1.5 rounded-lg bg-[#00B894] hover:bg-[#00a382] text-white text-xs font-bold flex items-center gap-1 shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                          >
-                            <Plus className="w-3.5 h-3.5" />
-                            <span>Add</span>
-                          </button>
-                        )}
+                      {/* Stepper at Bottom */}
+                      <div className="mt-3 bg-[#F1F6F4] border border-[#BFEBDD]/60 rounded-xl p-1 flex items-center justify-between">
+                        <button
+                          onClick={() => handleDecrement(item.id)}
+                          disabled={!inCart || inCart.quantity === 0}
+                          className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-white text-[#073653] flex items-center justify-center font-bold hover:bg-slate-100 transition text-sm disabled:opacity-30 disabled:cursor-not-allowed shadow-xs cursor-pointer"
+                          aria-label="Decrease quantity"
+                        >
+                          <Minus className="w-3.5 h-3.5" />
+                        </button>
+                        <span className="text-xs sm:text-sm font-black text-[#073653] px-1 sm:px-2 font-mono">
+                          {inCart ? inCart.quantity : 0}
+                        </span>
+                        <button
+                          onClick={() => handleIncrement(item)}
+                          disabled={canteenStatus !== 'OPEN' || !item.isAvailable || isPriceNotFixed}
+                          className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-[#00B894] hover:bg-[#00a382] text-white flex items-center justify-center font-bold transition text-sm disabled:opacity-40 disabled:cursor-not-allowed shadow-xs cursor-pointer"
+                          aria-label="Increase quantity"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
                       </div>
                     </div>
                   );
@@ -1499,106 +1555,76 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
               </div>
             ) : (
               /* ========================================================= */
-              /* 7. LIST VIEW WITH RIGHT-SIDE CART PREVIEW MATCHING REF 2 */
+              /* 7. LIST VIEW MATCHING REFERENCE 1 (Right Screen) */
               /* ========================================================= */
               <div className="flex flex-col lg:flex-row gap-5 items-start">
-                {/* Left: Vertically scrollable queue of menu-item rows */}
+                {/* List Items */}
                 <div className="flex-1 w-full space-y-3">
                   {filteredItems.map(item => {
                     const inCart = cart.find(ci => ci.item.id === item.id);
                     const isPriceNotFixed = item.price === null || item.price === undefined;
-                    const catName = categories.find(c => c.id === item.categoryId)?.name || 'Canteen Special';
                     const isFav = favorites.has(item.id);
                     const dishImage = getItemImage(item);
 
                     return (
                       <div
                         key={item.id}
-                        className="bg-white/95 rounded-2xl border border-[#BFEBDD]/60 p-3 sm:p-4 shadow-card hover:shadow-md transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                        className="bg-white/95 rounded-2xl border border-[#BFEBDD]/60 p-3 sm:p-3.5 shadow-sm hover:shadow-md transition-all flex items-center justify-between gap-3"
                       >
-                        {/* Image + Info */}
-                        <div className="flex items-center gap-3.5 flex-1 min-w-0">
-                          <div className="w-16 h-16 rounded-xl overflow-hidden shrink-0 bg-amber-50/40 border border-slate-100">
+                        {/* Left: Square Dish Image + Title & Price */}
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="w-16 h-16 sm:w-18 sm:h-18 rounded-xl overflow-hidden shrink-0 bg-slate-50 border border-slate-100">
                             <img
                               src={dishImage}
                               alt={item.name}
                               className="w-full h-full object-cover"
                               loading="lazy"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80';
+                              }}
                             />
                           </div>
 
                           <div className="min-w-0 flex-1">
-                            <span className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[#00B894] mb-0.5">
-                              <span className="w-1.5 h-1.5 rounded-full bg-[#00B894]" />
-                              <span>{catName}</span>
-                            </span>
                             <h3 className="font-extrabold text-sm sm:text-base text-[#073653] leading-snug truncate">
                               {item.name}
                             </h3>
-                            <p className="text-xs text-[#64839A] truncate mt-0.5">
-                              {item.description || 'Steamed and freshly prepared at IP Canteen.'}
+                            <p className="text-sm sm:text-base font-black text-[#0284C7] mt-0.5">
+                              {isPriceNotFixed ? 'Unlisted' : `₹${parseFloat(item.price as string).toFixed(2)}`}
                             </p>
-                            {item.dailyCapacity && (
-                              <p className="text-[10px] text-[#64839A]/80 font-semibold mt-0.5">
-                                Daily Order Limit: {item.dailyCapacity}
-                              </p>
-                            )}
                           </div>
                         </div>
 
-                        {/* Price, Stepper, + Add & Favorite */}
-                        <div className="flex items-center justify-between sm:justify-end gap-3 sm:gap-4 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
-                          <span className="text-base font-black text-[#073653] min-w-[70px] text-left sm:text-right">
-                            {isPriceNotFixed ? 'Unlisted' : `₹${item.price}`}
-                          </span>
-
-                          {/* Stepper if available */}
-                          {item.isAvailable && !isPriceNotFixed && (
-                            <div className="flex items-center gap-1 bg-[#F1F6F4] rounded-xl p-1 border border-[#BFEBDD]/60">
-                              <button
-                                onClick={() => updateCartQuantity(item.id, -1)}
-                                disabled={!inCart}
-                                className="w-6 h-6 rounded-lg bg-white flex items-center justify-center text-[#073653] hover:bg-slate-100 font-bold disabled:opacity-30 disabled:cursor-not-allowed"
-                                aria-label="Decrease quantity"
-                              >
-                                <Minus className="w-3 h-3" />
-                              </button>
-                              <span className="text-xs font-black text-[#073653] px-2 min-w-[20px] text-center">
-                                {inCart ? inCart.quantity : 1}
-                              </span>
-                              <button
-                                onClick={() => updateCartQuantity(item.id, 1)}
-                                className="w-6 h-6 rounded-lg bg-white flex items-center justify-center text-[#073653] hover:bg-slate-100 font-bold"
-                                aria-label="Increase quantity"
-                              >
-                                <Plus className="w-3 h-3" />
-                              </button>
-                            </div>
-                          )}
-
-                          {/* + Add Button */}
-                          {item.isAvailable && !isPriceNotFixed ? (
+                        {/* Right: Stepper + Favorite Heart */}
+                        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                          <div className="flex items-center gap-1 bg-[#F1F6F4] rounded-xl p-1 border border-[#BFEBDD]/60">
                             <button
-                              onClick={() => addToCart(item)}
-                              disabled={canteenStatus !== 'OPEN'}
-                              className="px-4 py-2 rounded-xl bg-[#0B725C] hover:bg-[#095E4B] text-white text-xs font-bold flex items-center gap-1 shadow-sm transition disabled:opacity-50"
+                              onClick={() => handleDecrement(item.id)}
+                              disabled={!inCart || inCart.quantity === 0}
+                              className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-white flex items-center justify-center text-[#073653] hover:bg-slate-100 font-bold disabled:opacity-30 disabled:cursor-not-allowed shadow-xs cursor-pointer"
+                              aria-label="Decrease quantity"
                             >
-                              <Plus className="w-3.5 h-3.5" />
-                              <span>Add</span>
+                              <Minus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                             </button>
-                          ) : (
-                            <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-3 py-1.5 rounded-xl">
-                              Unavailable
+                            <span className="text-xs sm:text-sm font-black text-[#073653] px-2 min-w-[20px] text-center font-mono">
+                              {inCart ? inCart.quantity : 0}
                             </span>
-                          )}
+                            <button
+                              onClick={() => handleIncrement(item)}
+                              disabled={canteenStatus !== 'OPEN' || !item.isAvailable || isPriceNotFixed}
+                              className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-[#00B894] hover:bg-[#00a382] text-white flex items-center justify-center font-bold transition shadow-xs disabled:opacity-40 cursor-pointer"
+                              aria-label="Increase quantity"
+                            >
+                              <Plus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
+                            </button>
+                          </div>
 
-                          {/* Favorite Heart Button */}
                           <button
                             onClick={() => toggleFavorite(item.id)}
-                            className="p-1 text-slate-300 hover:text-rose-500 transition"
+                            className="p-1.5 text-slate-300 hover:text-rose-500 transition cursor-pointer"
                             aria-label="Add to favorites"
                           >
-                            <Heart className={`w-4 h-4 ${isFav ? 'fill-rose-500 text-rose-500' : ''}`} />
+                            <Heart className={`w-4 h-4 sm:w-5 sm:h-5 ${isFav ? 'fill-rose-500 text-rose-500' : 'text-[#64839A]'}`} />
                           </button>
                         </div>
                       </div>
@@ -2057,6 +2083,20 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                           </div>
                         )}
 
+                        {/* Customer Cancel Order Action (Eligible before payment is confirmed) */}
+                        {order.paymentStatus !== 'PAID' && ['REQUESTED', 'ACCEPTED', 'TIME_CHANGE_PROPOSED'].includes(order.status) && (
+                          <div className="pt-1 flex justify-end">
+                            <button
+                              onClick={() => handleCancelOrder(order.id)}
+                              disabled={actionLoading[order.id] === 'CANCELLING'}
+                              className="text-xs font-bold text-rose-600 hover:text-rose-700 hover:underline flex items-center gap-1 cursor-pointer py-1 px-2.5 rounded-lg hover:bg-rose-50 transition"
+                            >
+                              {actionLoading[order.id] === 'CANCELLING' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                              <span>Cancel Order</span>
+                            </button>
+                          </div>
+                        )}
+
                         {/* Pickup Code Display */}
                         {pickupCode && ['CONFIRMED', 'PREPARING', 'READY'].includes(order.status) && (
                           <div className="p-3.5 bg-[#DFF3E8] rounded-2xl border border-[#BFEBDD] flex items-center justify-between">
@@ -2104,10 +2144,15 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                           </div>
                           <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide border ${
                             order.status === 'COLLECTED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
-                            order.status === 'CANCELLED' || order.status === 'REJECTED' ? 'bg-rose-50 text-rose-700 border-rose-200' :
+                            order.status === 'CANCELLED' ? 'bg-slate-50 text-slate-700 border-slate-200' :
+                            order.status === 'EXPIRED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                            order.status === 'REJECTED' ? 'bg-rose-50 text-rose-700 border-rose-200' :
                             'bg-slate-50 text-slate-700 border-slate-200'
                           }`}>
-                            {order.status === 'COLLECTED' ? '✓ Collected' : order.status}
+                            {order.status === 'COLLECTED' ? '✓ Collected' :
+                             order.status === 'CANCELLED' ? 'Cancelled' :
+                             order.status === 'EXPIRED' ? '⚠ Not Collected' :
+                             order.status}
                           </span>
                         </div>
 
@@ -2202,8 +2247,16 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                           </button>
                         </div>
 
+                        {/* Notice for uncollected / expired orders */}
+                        {order.status === 'EXPIRED' && (
+                          <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-800">
+                            <span className="font-bold">Notice: </span>
+                            <span>This order was marked as not collected because it remained uncollected 2 hours past the scheduled pickup time.</span>
+                          </div>
+                        )}
+
                         {/* Rejection/Cancellation note if any */}
-                        {(order.rejectionReason || order.rejectionNote) && (
+                        {order.status !== 'EXPIRED' && (order.rejectionReason || order.rejectionNote) && (
                           <div className="p-3 bg-rose-50 rounded-xl border border-rose-200 text-xs text-rose-700">
                             <span className="font-bold">Reason: </span>
                             <span>{order.rejectionReason || order.rejectionNote}</span>

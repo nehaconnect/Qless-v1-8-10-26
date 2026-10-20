@@ -6,6 +6,7 @@ import {
   sellerAcceptOrder,
   sellerRejectOrder,
   sellerCancelUnpaidOrder,
+  customerCancelOrder,
   sellerSuggestTime,
   customerRespondTimeSuggestion,
   sellerStartOrderPrep,
@@ -135,6 +136,13 @@ export async function PATCH(
       case 'CUSTOMER_RESPOND_TIME':
         const responseAction = body.responseAction || (body.accept ? 'ACCEPT' : 'DECLINE');
         result = await customerRespondTimeSuggestion(orderId, authUser.id, responseAction, body.counterTime);
+        break;
+
+      case 'CUSTOMER_CANCEL':
+        if (authUser.effectiveRole !== 'CUSTOMER' && authUser.effectiveRole !== 'ADMIN') {
+          return NextResponse.json({ error: 'Forbidden: Customer access required' }, { status: 403 });
+        }
+        result = await customerCancelOrder(orderId, authUser.id, body.reason);
         break;
 
       case 'SELLER_START_PREP':

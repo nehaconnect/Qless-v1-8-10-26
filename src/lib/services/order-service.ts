@@ -697,6 +697,176 @@ export async function sellerCancelUnpaidOrder(
 }
 
 /**
+ * Customer cancels an order before payment is verified.
+ * - Eligible only in unpaid statuses: REQUESTED, TIME_CHANGE_PROPOSED, ACCEPTED, AWAITING_PAYMENT, PAYMENT_PENDING.
+ * - Strict server-side verification: Rejects if order is already paid, preparing, ready, collected, or cancelled.
+ * - Race-condition safe via database transaction checking fresh status.
+ */
+export async function customerCancelOrder(
+  orderId: string,
+  customerUserId: string,
+  reason?: string
+) {
+  const order = await db.query.orders.findFirst({
+    where: eq(orders.id, orderId),
+  });
+
+  if (!order) {
+    throw new Error('Order not found');
+  }
+
+  if (order.customerId !== customerUserId) {
+    throw new Error('Forbidden: You can only cancel your own order');
+  }
+
+  if (
+    order.paymentStatus === 'PAID' ||
+    ['CONFIRMED', 'PREPARING', 'READY', 'READY_FOR_PICKUP', 'COLLECTED'].includes(order.status)
+  ) {
+    throw new Error('Cannot cancel order: payment has already been verified and kitchen preparation has commenced.');
+  }
+
+  if (order.status === 'CANCELLED') {
+    throw new Error('Order is already cancelled');
+  }
+
+  if (!['REQUESTED', 'TIME_CHANGE_PROPOSED', 'ACCEPTED', 'AWAITING_PAYMENT', 'PAYMENT_PENDING'].includes(order.status)) {
+    throw new Error(`Order cannot be cancelled in "${order.status}" status.`);
+  }
+
+  return await db.transaction(async (tx) => {
+    const [freshOrder] = await tx
+      .select()
+      .from(orders)
+      .where(eq(orders.id, orderId))
+      .for('update');
+
+    if (!freshOrder) throw new Error('Order not found');
+
+    if (
+      freshOrder.paymentStatus === 'PAID' ||
+      ['CONFIRMED', 'PREPARING', 'READY', 'READY_FOR_PICKUP', 'COLLECTED'].includes(freshOrder.status)
+    ) {
+      throw new Error('Cannot cancel order: payment has already been verified and kitchen preparation has commenced.');
+    }
+
+    if (freshOrder.status === 'CANCELLED') {
+      throw new Error('Order is already cancelled');
+    }
+
+    const cancelReason = reason || 'Cancelled by customer before payment';
+
+    const [updated] = await tx
+      .update(orders)
+      .set({
+        status: 'CANCELLED',
+        paymentStatus: freshOrder.paymentStatus === 'PAID' ? 'PAID' : 'EXPIRED',
+        rejectionReason: 'CUSTOMER_CANCELLED',
+        rejectionNote: cancelReason,
+        cancelledAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(orders.id, orderId))
+      .returning();
+
+    // Release batch capacity reservation if batch is assigned
+    if (freshOrder.batchId) {
+      await tx
+        .update(pickupBatches)
+        .set({
+          reservedCount: sql`GREATEST(0, ${pickupBatches.reservedCount} - 1)`,
+        })
+        .where(eq(pickupBatches.id, freshOrder.batchId));
+    }
+
+    await tx.insert(orderStatusHistory).values({
+      orderId,
+      fromStatus: freshOrder.status,
+      toStatus: 'CANCELLED',
+      changedByUserId: customerUserId,
+      actorRole: 'CUSTOMER',
+      reason: `Customer cancelled order: ${cancelReason}`,
+    });
+
+    await tx.insert(auditLogs).values({
+      canteenId: freshOrder.canteenId,
+      actorId: customerUserId,
+      actorRole: 'CUSTOMER',
+      action: 'ORDER_CANCELLED_BY_CUSTOMER',
+      entityType: 'ORDER',
+      entityId: orderId,
+      metadata: { reason: cancelReason },
+    });
+
+    return updated;
+  });
+}
+
+/**
+ * Automatically marks orders uncollected 2 hours after their scheduled pickup time
+ * as EXPIRED ("Not Collected") and moves them to Previous Orders.
+ * - Idempotent server-side sweep
+ * - Respects Asia/Kolkata timezone
+ */
+export async function autoExpireUncollectedOrders(canteenId?: string) {
+  try {
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+
+    const conditions = [
+      inArray(orders.status, ['READY', 'READY_FOR_PICKUP', 'CONFIRMED', 'PREPARING']),
+      sql`${orders.exactPickupTime} <= ${twoHoursAgo.toISOString()}`,
+    ];
+
+    if (canteenId) {
+      conditions.push(eq(orders.canteenId, canteenId));
+    }
+
+    const uncollectedOrders = await db
+      .select({ id: orders.id, orderNumber: orders.orderNumber, status: orders.status, customerId: orders.customerId, canteenId: orders.canteenId })
+      .from(orders)
+      .where(and(...conditions));
+
+    if (uncollectedOrders.length === 0) return { transitionedCount: 0 };
+
+    for (const ord of uncollectedOrders) {
+      await db.transaction(async (tx) => {
+        await tx
+          .update(orders)
+          .set({
+            status: 'EXPIRED',
+            rejectionReason: 'NOT_COLLECTED_AFTER_2_HOURS',
+            rejectionNote: 'Order remained uncollected 2 hours past scheduled pickup time.',
+            updatedAt: new Date(),
+          })
+          .where(and(eq(orders.id, ord.id), inArray(orders.status, ['READY', 'READY_FOR_PICKUP', 'CONFIRMED', 'PREPARING'])));
+
+        await tx.insert(orderStatusHistory).values({
+          orderId: ord.id,
+          fromStatus: ord.status,
+          toStatus: 'EXPIRED',
+          changedByUserId: ord.customerId,
+          actorRole: 'SYSTEM',
+          reason: 'Order automatically marked not collected after 2-hour pickup expiry window.',
+        });
+
+        await tx.insert(notifications).values({
+          userId: ord.customerId,
+          orderId: ord.id,
+          title: 'Order Marked as Not Collected',
+          message: `Order #${ord.orderNumber} was marked as not collected because it remained uncollected 2 hours past the scheduled pickup time.`,
+          type: 'ORDER_EXPIRED',
+        });
+      });
+    }
+
+    return { transitionedCount: uncollectedOrders.length };
+  } catch (err) {
+    console.error('Error during autoExpireUncollectedOrders:', err);
+    return { transitionedCount: 0 };
+  }
+}
+
+/**
  * Seller suggests another pickup time
  */
 export async function sellerSuggestTime(

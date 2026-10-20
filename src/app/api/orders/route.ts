@@ -2,12 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, orders, orderItems, pickupBatches, canteens, user, pickupCodes, payments } from '@/lib/db';
 import { eq, desc, and, inArray, gte, lte } from 'drizzle-orm';
 import { requireAuth } from '@/lib/auth/server';
-import { createOrder, decryptPickupCode, format12HourIST } from '@/lib/services/order-service';
+import { createOrder, decryptPickupCode, format12HourIST, autoExpireUncollectedOrders } from '@/lib/services/order-service';
 import { toCanonicalPickupTime, formatPickupTimeDisplay, getISTDateRangeBounds } from '@/lib/pickup-time';
 
 export async function GET(req: NextRequest) {
   try {
     const authUser = await requireAuth();
+
+    // Idempotent automatic transition of orders uncollected 2 hours past pickup time
+    await autoExpireUncollectedOrders(authUser.effectiveRole === 'SELLER' ? authUser.canteenId : undefined);
+
     const { searchParams } = new URL(req.url);
     const dateParam = searchParams.get('date');
     const startDateParam = searchParams.get('startDate') || dateParam;
