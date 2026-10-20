@@ -1,7 +1,7 @@
 import { auth } from "./auth";
 import { headers } from "next/headers";
-import { db, user, sellerProfiles, customerProfiles } from "@/lib/db";
-import { eq } from "drizzle-orm";
+import { db, user, session, sellerProfiles, customerProfiles } from "@/lib/db";
+import { eq, and, or } from "drizzle-orm";
 
 export interface AuthenticatedUser {
   id: string;
@@ -29,15 +29,43 @@ export async function getSessionUser(customHeaders?: Headers): Promise<Authentic
       }
     }
 
-    const session = await auth.api.getSession({
-      headers: headerList
-    });
-
-    if (!session || !session.user) {
-      return null;
+    let sessionResult: any = null;
+    try {
+      sessionResult = await auth.api.getSession({
+        headers: headerList
+      });
+    } catch {
+      sessionResult = null;
     }
 
-    const u = session.user as any;
+    let u = sessionResult?.user as any;
+
+    // Resilient fallback: If auth.api.getSession returned null (e.g. host/origin mismatch or proxy headers in Next.js 14 Route Handlers),
+    // inspect the session token from the cookie header and verify against the session table.
+    if (!u) {
+      const cookieHeader = headerList.get("cookie") || "";
+      const match = cookieHeader.match(/(?:better-auth\.|__Secure-better-auth\.)session_token=([^;]+)/);
+      if (match && match[1]) {
+        const rawToken = decodeURIComponent(match[1].trim()).replace(/^"(.*)"$/, '$1');
+        const candidateToken1 = rawToken.split(".")[0];
+        const candidateToken2 = rawToken;
+        const dbSession = await db.query.session.findFirst({
+          where: or(eq(session.token, candidateToken1), eq(session.token, candidateToken2)),
+        });
+        if (dbSession && new Date(dbSession.expiresAt).getTime() > Date.now() && dbSession.userId) {
+          const dbUser = await db.query.user.findFirst({
+            where: eq(user.id, dbSession.userId),
+          });
+          if (dbUser && dbUser.isActive) {
+            u = dbUser;
+          }
+        }
+      }
+    }
+
+    if (!u) {
+      return null;
+    }
 
     // Reject inactive or deleted accounts
     const userInDb = await db.query.user.findFirst({
@@ -103,6 +131,7 @@ export async function getSessionUser(customHeaders?: Headers): Promise<Authentic
       sellerApprovalStatus,
     };
   } catch (err) {
+    console.error('[auth/server] getSessionUser unexpected error:', err);
     return null;
   }
 }

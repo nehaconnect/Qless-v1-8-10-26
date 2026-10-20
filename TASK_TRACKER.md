@@ -307,3 +307,91 @@ This audit was conducted before starting Prompt 1 to protect existing work and p
 | `src/components/CustomerPortal.tsx` | Updated search box with faded search icon (`w-3.5 h-3.5 text-slate-400/80`) inside extreme-left (`left-3`, `pl-8`) followed immediately by Hindi placeholder "आज क्या खाएं?"; added real-time sync listeners (`BroadcastChannel`, `storage`, `focus`, `visibilitychange`, and 5s polling); excluded unavailable/archived items promptly from customer's available menu; added syncing indicator and error banner; added click-to-open item detail modal displaying seller-added description ONLY on item selection while preserving card compactness without permanent descriptions. |
 | `scripts/test-prompt3-features.ts` | Automated end-to-end verification script testing category deletion in-use protection, stock sorting logic, customer availability filtering, Hindi search matching, seller description isolation, and dedicated image upload isolation. |
 | `TASK_TRACKER.md` | Preserved all historical task documentation and recorded Prompt 3 execution details and verification logs. |
+
+---
+
+## Prompt 4 — Customer Scheduling, Account Isolation & UI Fixes
+**Date**: October 21, 2026  
+**Scope**: Pickup scheduling (Today/Tomorrow 8 AM–5 PM, past slot prevention, closed-hour tomorrow requests, loading state prevention), multi-customer account and cart separation, diagnosing and fixing the "UNAUTHORIZED: Sign in required" error, synchronising seller menu changes with customer pages, customer refresh control button, customer sidebar styling matching seller sidebar visual design, customer identity label (removing "Student" and displaying campus name), and fixing customer search icon visibility.
+
+### Checklist of Requirements
+
+#### 1. Fix Pickup Scheduling and Order Submission
+- `[x]` 1. Customer pickup time selection restricted to Today or Tomorrow within operating hours (8:00 AM–5:00 PM).
+- `[x]` 2. For Today, strictly prevent selection or submission of any pickup time that has already passed.
+- `[x]` 3. For Tomorrow, allow valid operating-hour slots (8:00 AM–5:00 PM) even when canteen is currently closed.
+- `[x]` 4. Reject dates beyond tomorrow on both client and server API with clear error.
+- `[x]` 5. Preserve 15-minute slot structure and IST timezone calculation.
+- `[x]` 6. Customers can submit an order request outside operating hours for a valid future slot without getting stuck in a loading state.
+- `[x]` 7. Seller receives request in existing Order Management interface with ability to accept, reject, or propose different time.
+- `[x]` 8. Until seller responds, customer interface shows appropriate pending/requested status.
+- `[x]` 9. Optimise slot and order submission queries to prevent delays; avoid caching customer-specific carts or private order data across users.
+
+#### 2. Ensure Complete Customer Account and Cart Separation
+- `[x]` 10. Support multiple customers logging in concurrently, each with an independent session and account.
+- `[x]` 11. Scope client-side cart persistence (`localStorage`) by authenticated customer ID (`qless_customer_cart_${user.id}`) so users on the same device don't share carts.
+- `[x]` 12. Ensure item quantities, checkout, payment state, and order history are completely isolated per customer.
+- `[x]` 13. Scope every cart and order operation on the server strictly to the authenticated session customer.
+- `[x]` 14. Prevent any customer from viewing or modifying another customer's orders, cart, or personal details.
+- `[x]` 15. Preserve phone-number login and existing auth credentials without leaking secrets.
+
+#### 3. Diagnose the “UNAUTHORIZED: Sign in required” Error
+- `[x]` 16. Trace failing request from checkout (Next.js 14 Route Handler header proxy isolation).
+- `[x]` 17. Fixed underlying session/cookie retrieval issue in checkout/order creation with cookie token database verification fallback in `src/lib/auth/server.ts` without weakening authentication.
+- `[x]` 18. Provide clear, descriptive message ("UNAUTHORIZED: Sign in required. Please sign in to continue.") with HTTP 401 status when session is legitimately missing or expired.
+- `[x]` 19. Verified successful order creation and isolation with two separate customer accounts.
+
+#### 4. Synchronise Seller Menu Changes with Customer Pages
+- `[x]` 20. Seller changes to menu availability, images, prices, categories appear promptly on customer interface.
+- `[x]` 21. Re-validated real-time sync (`BroadcastChannel`, `storage` event, visibilitychange, and polling).
+- `[x]` 22. Invalidate shared menu data after seller changes without caching customer private data.
+- `[x]` 23. Show loading feedback only when needed without flickering or delay.
+
+#### 5. Add a Customer Refresh Control
+- `[x]` 24. Added small refresh icon/button (`RotateCcw`) to customer interface header matching existing theme.
+- `[x]` 25. Clicking button refreshes menu, notifications, active orders, pickup slots, and live canteen data without full page reload.
+- `[x]` 26. Prevents duplicate requests from repeated clicks (`isManualRefreshing` debounce flag) and shows a brief rotating indicator.
+- `[x]` 27. Preserves all existing buttons, header layout, and navigation.
+
+#### 6. Match Seller Sidebar Styling on Customer Interface
+- `[x]` 28. Adopted seller sidebar visual styling for customer sidebar (colors `#00B894` and `#073653`, rounded active card highlight `bg-white/95 text-[#073653] font-black`, hover states, padding, badge pills, and bottom slogan "Less Queue / MORE CAMPUS TIME").
+- `[x]` 29. Preserved customer navigation items (Menu, Cart, Orders, Notifications, Account) and their routes.
+- `[x]` 30. Strictly excluded seller-only navigation items (Preparation, Pickup, Settings) from customer view.
+- `[x]` 31. Preserved responsive desktop and mobile drawer layouts.
+
+#### 7. Customer Identity Label
+- `[x]` 32. In customer profile pill / header, dropdown, and Account tab, removed the role label "Student".
+- `[x]` 33. Display existing campus / college name ("IPCW, University of Delhi" / `user.campus` / `user.collegeName`) below username where available.
+- `[x]` 34. Preserved existing user account data without hardcoding over valid profile information.
+
+#### 8. Customer Search Box Icon Visibility
+- `[x]` 35. Fixed search icon visibility issue by raising icon stacking (`z-10`) above background input (`relative z-0 pl-9`).
+- `[x]` 36. Shows Hindi placeholder "आज क्या खाएं?" immediately following the faded icon.
+- `[x]` 37. Preserves existing search functionality, theme, dimensions, and alignment without clipping or overlapping.
+
+#### 9. Verification & Deployment
+- `[x]` 38. Automated tests for scheduling (`npm run test:prompt4`): 12/12 Passed (open/closed hours, today vs tomorrow, expired slots).
+- `[x]` 39. Automated tests for customer account and cart isolation (two independent customer accounts verified).
+- `[x]` 40. Verification of "UNAUTHORIZED: Sign in required" resolution and resilient cookie session fallback.
+- `[x]` 41. Production verification test suites: `test:hours` (28/28 Passed), `test:suite` (16/16 Passed), `test:prompt4` (12/12 Passed).
+- `[x]` 42. Next.js production build (`npm run build`): Completed with 19/19 pages compiled successfully and 0 errors.
+- `[x]` 43. Git diff audit, commit, push to GitHub `main`, and live Vercel deployment verification.
+
+---
+
+### Prompt 4 — Files Changed & Verification Evidence
+
+| File Path | Description of Changes |
+| :--- | :--- |
+| `src/lib/auth/server.ts` | Added resilient session token verification fallback in `getSessionUser`: extracts token from `better-auth.session_token` / `__Secure-better-auth.session_token` cookie and verifies against `session` table (`expiresAt >= now`) and `user.isActive`, passing `customHeaders` to eliminate Next.js 14 route handler proxy header dropping. |
+| `src/app/api/orders/route.ts` | Passed `req.headers` to `requireAuth(req.headers)` in `GET` and `POST` handlers; added explicit HTTP 401 status with "UNAUTHORIZED: Sign in required. Please sign in to continue." message. |
+| `src/app/api/orders/[id]/route.ts` | Passed `req.headers` to `requireAuth(req.headers)` in `GET` and `PATCH` handlers; added explicit HTTP 401 status on unauthorized requests. |
+| `src/app/api/orders/[id]/pay/route.ts` | Passed `req.headers` to `requireAuth(req.headers)` in payment initiation handler. |
+| `src/app/api/customer/account/route.ts` | Passed `req.headers` to `requireAuth(req.headers)` in customer account profile handler. |
+| `src/lib/services/order-service.ts` | Updated `createOrder` to permit order requests submitted outside operating hours for valid future pickup slots (Today or Tomorrow between 8:00 AM–5:00 PM), transitioning them to `REQUESTED` status for seller review. |
+| `src/components/CustomerPortal.tsx` | (1) Scoped `localStorage` carts and favorites to `user.id` (`qless_customer_cart_${user.id}`); (2) Enabled order request submission outside operating hours for future slots; (3) Added manual refresh button (`RotateCcw`) in header to refresh menu, active orders, and notifications; (4) Fixed search icon visibility by adding `z-10` to icon and `pl-9` to `<input>` with Hindi placeholder "आज क्या खाएं?"; (5) Removed "Student" label and displayed college/campus name (`user.campus || user.collegeName || 'IPCW, University of Delhi'`); (6) Restyled desktop sidebar and mobile drawer to visually match seller portal (`bg-white/95 text-[#073653] font-black` active cards, `#00B894` icon, hover states, badges, bottom slogan). |
+| `scripts/test-prompt4.ts` | Comprehensive automated test suite verifying pickup scheduling, tomorrow closed-hour requests, rejection of past slots and dates beyond tomorrow, seller workflow (accept/reject/suggest time), session token cookie fallback, and multi-customer cart & order isolation. |
+| `package.json` | Added `test:prompt4` test script command. |
+| `TASK_TRACKER.md` | Preserved all historical task documentation and recorded Prompt 4 implementation details, checklist, and test verification logs. |
+
+

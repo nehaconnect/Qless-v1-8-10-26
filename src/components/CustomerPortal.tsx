@@ -187,11 +187,15 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
   const [viewMode, setViewMode] = useState<'GRID' | 'LIST'>('GRID');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Favorites state (persisted locally)
+  // User-scoped storage keys ensuring complete customer account and cart separation
+  const getCartStorageKey = (userId?: string) => userId ? `qless_customer_cart_${userId}` : 'qless_customer_cart';
+  const getFavoritesStorageKey = (userId?: string) => userId ? `qless_favorites_${userId}` : 'qless_favorites';
+
+  // Favorites state (persisted locally per authenticated customer)
   const [favorites, setFavorites] = useState<Set<string>>(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && user?.id) {
       try {
-        const saved = localStorage.getItem('qless_favorites');
+        const saved = localStorage.getItem(`qless_favorites_${user.id}`);
         if (saved) return new Set(JSON.parse(saved));
       } catch {}
     }
@@ -209,9 +213,9 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
   const [categories, setCategories] = useState<MenuCategory[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [cart, setCart] = useState<CartItem[]>(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && user?.id) {
       try {
-        const saved = localStorage.getItem('qless_customer_cart');
+        const saved = localStorage.getItem(`qless_customer_cart_${user.id}`);
         if (saved) return JSON.parse(saved);
       } catch {}
     }
@@ -220,6 +224,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
   const [isLoadingMenu, setIsLoadingMenu] = useState(true);
   const [isLoadingOrders, setIsLoadingOrders] = useState(true);
   const [isRefreshingMenu, setIsRefreshingMenu] = useState(false);
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const [menuSyncError, setMenuSyncError] = useState<string | null>(null);
   const isFetchingMenuRef = useRef(false);
 
@@ -418,14 +423,72 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
     };
   }, [selectedCanteenId]);
 
-  // Synchronize cart state to localStorage for persistence across reloads/navigation
+  // Synchronize cart state to authenticated customer ID (Requirement 2)
   useEffect(() => {
-    if (typeof window !== 'undefined') {
+    if (typeof window !== 'undefined' && user?.id) {
       try {
-        localStorage.setItem('qless_customer_cart', JSON.stringify(cart));
+        const saved = localStorage.getItem(`qless_customer_cart_${user.id}`);
+        if (saved) {
+          setCart(JSON.parse(saved));
+        } else {
+          setCart([]);
+        }
+      } catch {
+        setCart([]);
+      }
+    } else if (!user?.id) {
+      setCart([]);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && user?.id) {
+      try {
+        localStorage.setItem(`qless_customer_cart_${user.id}`, JSON.stringify(cart));
       } catch {}
     }
-  }, [cart]);
+  }, [cart, user?.id]);
+
+  // Synchronize favorites state to authenticated customer ID
+  useEffect(() => {
+    if (typeof window !== 'undefined' && user?.id) {
+      try {
+        const saved = localStorage.getItem(`qless_favorites_${user.id}`);
+        if (saved) {
+          setFavorites(new Set(JSON.parse(saved)));
+        } else {
+          setFavorites(new Set());
+        }
+      } catch {}
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && user?.id) {
+      try {
+        localStorage.setItem(`qless_favorites_${user.id}`, JSON.stringify(Array.from(favorites)));
+      } catch {}
+    }
+  }, [favorites, user?.id]);
+
+  // Manual Refresh Control (Requirement 5)
+  const handleManualRefresh = async () => {
+    if (isManualRefreshing) return;
+    setIsManualRefreshing(true);
+    try {
+      await Promise.allSettled([
+        fetchMenu(false),
+        fetchOrders(false),
+        fetchNotifications(),
+        fetchCanteens(),
+      ]);
+      const isTomorrow = selectedPickupDay === 'TOMORROW';
+      const refreshedSlots = getAllDayPickupSlots(new Date(), isTomorrow);
+      setDaySlots(refreshedSlots);
+    } finally {
+      setTimeout(() => setIsManualRefreshing(false), 500);
+    }
+  };
 
   // Refresh pickup slot availability periodically and whenever Cart tab or selected day changes
   useEffect(() => {
@@ -624,9 +687,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
       setErrorMsg(validation.error || 'Please select a valid future pickup time between 8:00 AM and 5:00 PM IST');
       return;
     }
-    // Only check current-day OPEN status if ordering for today!
-    if (!isTomorrow && canteenStatus !== 'OPEN') {
-      setErrorMsg(`Canteen is currently ${canteenStatus}. Orders for today cannot be placed at this time. You can schedule an order for tomorrow.`);
+
+    // If canteen is busy during operating hours, warn customer
+    if (!isTomorrow && canteenStatus === 'TOO_BUSY') {
+      setErrorMsg('Canteen is currently busy. New orders for today are temporarily paused by the seller. You can schedule an order for tomorrow.');
       return;
     }
 
@@ -648,18 +712,25 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
       const res = await fetch('/api/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(payload),
       });
 
       const data = await res.json();
       if (!res.ok) {
+        if (res.status === 401 || data.error?.includes('UNAUTHORIZED') || data.error?.includes('Sign in required')) {
+          throw new Error('Your session has expired or sign in is required. Please sign in to place an order.');
+        }
         throw new Error(data.error || 'Failed to place order request');
       }
 
       setCart([]);
-      try {
-        localStorage.removeItem('qless_customer_cart');
-      } catch {}
+      if (typeof window !== 'undefined' && user?.id) {
+        try {
+          localStorage.removeItem(`qless_customer_cart_${user.id}`);
+          localStorage.removeItem('qless_customer_cart');
+        } catch {}
+      }
       setSuccessMsg(`Order #${data.order.orderNumber} placed successfully! Please wait for seller acceptance.`);
       setActiveTab('ORDERS');
       fetchOrders(false);
@@ -960,11 +1031,13 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                 <button
                   onClick={() => { setActiveTab('MENU'); setIsMobileDrawerOpen(false); }}
                   className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
-                    activeTab === 'MENU' ? 'bg-[#C6EBD9] text-[#073653] shadow-sm' : 'text-[#073653] hover:bg-[#BFEBDD]/50'
+                    activeTab === 'MENU'
+                      ? 'bg-white/95 text-[#073653] shadow-sm border border-[#BFEBDD]/80 font-black'
+                      : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <Utensils className="w-4 h-4 text-[#073653]" />
+                    <Utensils className={`w-4 h-4 ${activeTab === 'MENU' ? 'text-[#00B894]' : 'text-[#64839A]'}`} />
                     <span>Menu</span>
                   </div>
                 </button>
@@ -972,15 +1045,19 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                 <button
                   onClick={() => { setActiveTab('CART'); setIsMobileDrawerOpen(false); }}
                   className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
-                    activeTab === 'CART' ? 'bg-[#C6EBD9] text-[#073653] shadow-sm' : 'text-[#073653] hover:bg-[#BFEBDD]/50'
+                    activeTab === 'CART'
+                      ? 'bg-white/95 text-[#073653] shadow-sm border border-[#BFEBDD]/80 font-black'
+                      : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <ShoppingBag className="w-4 h-4 text-[#073653]" />
+                    <ShoppingBag className={`w-4 h-4 ${activeTab === 'CART' ? 'text-[#00B894]' : 'text-[#64839A]'}`} />
                     <span>Cart</span>
                   </div>
                   {cartItemCount > 0 && (
-                    <span className="w-5 h-5 rounded-full text-[11px] font-black bg-[#FF5A5F] text-white flex items-center justify-center">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                      activeTab === 'CART' ? 'bg-[#00B894] text-white' : 'bg-[#DFF3E8] text-[#073653] border border-[#BFEBDD]/70'
+                    }`}>
                       {cartItemCount}
                     </span>
                   )}
@@ -989,15 +1066,19 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                 <button
                   onClick={() => { setActiveTab('ORDERS'); setIsMobileDrawerOpen(false); }}
                   className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
-                    activeTab === 'ORDERS' ? 'bg-[#C6EBD9] text-[#073653] shadow-sm' : 'text-[#073653] hover:bg-[#BFEBDD]/50'
+                    activeTab === 'ORDERS'
+                      ? 'bg-white/95 text-[#073653] shadow-sm border border-[#BFEBDD]/80 font-black'
+                      : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <Clock className="w-4 h-4 text-[#073653]" />
+                    <Clock className={`w-4 h-4 ${activeTab === 'ORDERS' ? 'text-[#00B894]' : 'text-[#64839A]'}`} />
                     <span>My Orders</span>
                   </div>
                   {activeOrders.length > 0 && (
-                    <span className="w-5 h-5 rounded-full text-[11px] font-black bg-[#00B894] text-white flex items-center justify-center">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                      activeTab === 'ORDERS' ? 'bg-[#00B894] text-white' : 'bg-[#DFF3E8] text-[#073653] border border-[#BFEBDD]/70'
+                    }`}>
                       {activeOrders.length}
                     </span>
                   )}
@@ -1006,15 +1087,19 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                 <button
                   onClick={() => { setActiveTab('NOTIFICATIONS'); setIsMobileDrawerOpen(false); }}
                   className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
-                    activeTab === 'NOTIFICATIONS' ? 'bg-[#C6EBD9] text-[#073653] shadow-sm' : 'text-[#073653] hover:bg-[#BFEBDD]/50'
+                    activeTab === 'NOTIFICATIONS'
+                      ? 'bg-white/95 text-[#073653] shadow-sm border border-[#BFEBDD]/80 font-black'
+                      : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <Bell className="w-4 h-4 text-[#073653]" />
+                    <Bell className={`w-4 h-4 ${activeTab === 'NOTIFICATIONS' ? 'text-[#00B894]' : 'text-[#64839A]'}`} />
                     <span>Notifications</span>
                   </div>
                   {unreadNotificationsCount > 0 && (
-                    <span className="w-5 h-5 rounded-full text-[11px] font-black bg-[#FF5A5F] text-white flex items-center justify-center">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                      activeTab === 'NOTIFICATIONS' ? 'bg-[#00B894] text-white' : 'bg-[#DFF3E8] text-[#073653] border border-[#BFEBDD]/70'
+                    }`}>
                       {unreadNotificationsCount}
                     </span>
                   )}
@@ -1023,11 +1108,13 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                 <button
                   onClick={() => { setActiveTab('ACCOUNT'); setIsMobileDrawerOpen(false); }}
                   className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
-                    activeTab === 'ACCOUNT' ? 'bg-[#C6EBD9] text-[#073653] shadow-sm' : 'text-[#073653] hover:bg-[#BFEBDD]/50'
+                    activeTab === 'ACCOUNT'
+                      ? 'bg-white/95 text-[#073653] shadow-sm border border-[#BFEBDD]/80 font-black'
+                      : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <User className="w-4 h-4 text-[#073653]" />
+                    <User className={`w-4 h-4 ${activeTab === 'ACCOUNT' ? 'text-[#00B894]' : 'text-[#64839A]'}`} />
                     <span>Account Settings</span>
                   </div>
                 </button>
@@ -1059,38 +1146,47 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
             <QLessLogo size="md" showSubtitle={false} />
           </div>
 
-          {/* Navigation Links in exact required order */}
-          <nav className="space-y-1.5">
+          {/* Navigation Links strictly matching Seller Sidebar styling (Requirement 6) */}
+          <nav className="space-y-1.5 relative z-10">
             {/* 1. Menu */}
             <button
               onClick={() => setActiveTab('MENU')}
-              className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
                 activeTab === 'MENU'
-                  ? 'bg-[#C6EBD9] text-[#073653] shadow-sm'
-                  : 'text-[#073653] hover:bg-[#BFEBDD]/50'
+                  ? 'bg-white/95 text-[#073653] shadow-sm border border-[#BFEBDD]/80 font-black'
+                  : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
               }`}
             >
               <div className="flex items-center gap-3">
-                <Utensils className="w-4 h-4 text-[#073653]" />
+                <Utensils className={`w-4 h-4 ${activeTab === 'MENU' ? 'text-[#00B894]' : 'text-[#64839A]'}`} />
                 <span>Menu</span>
               </div>
+              {filteredItems.length > 0 && (
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                  activeTab === 'MENU' ? 'bg-[#00B894] text-white' : 'bg-[#DFF3E8] text-[#073653] border border-[#BFEBDD]/70'
+                }`}>
+                  {filteredItems.length}
+                </span>
+              )}
             </button>
 
             {/* 2. Cart */}
             <button
               onClick={() => setActiveTab('CART')}
-              className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
                 activeTab === 'CART'
-                  ? 'bg-[#C6EBD9] text-[#073653] shadow-sm'
-                  : 'text-[#073653] hover:bg-[#BFEBDD]/50'
+                  ? 'bg-white/95 text-[#073653] shadow-sm border border-[#BFEBDD]/80 font-black'
+                  : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
               }`}
             >
               <div className="flex items-center gap-3">
-                <ShoppingBag className="w-4 h-4 text-[#073653]" />
+                <ShoppingBag className={`w-4 h-4 ${activeTab === 'CART' ? 'text-[#00B894]' : 'text-[#64839A]'}`} />
                 <span>Cart</span>
               </div>
               {cartItemCount > 0 && (
-                <span className="w-5 h-5 rounded-full text-[11px] font-black bg-[#FF5A5F] text-white flex items-center justify-center">
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                  activeTab === 'CART' ? 'bg-[#00B894] text-white' : 'bg-rose-500 text-white'
+                }`}>
                   {cartItemCount}
                 </span>
               )}
@@ -1099,18 +1195,20 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
             {/* 3. My Orders */}
             <button
               onClick={() => setActiveTab('ORDERS')}
-              className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
                 activeTab === 'ORDERS'
-                  ? 'bg-[#C6EBD9] text-[#073653] shadow-sm'
-                  : 'text-[#073653] hover:bg-[#BFEBDD]/50'
+                  ? 'bg-white/95 text-[#073653] shadow-sm border border-[#BFEBDD]/80 font-black'
+                  : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
               }`}
             >
               <div className="flex items-center gap-3">
-                <Clock className="w-4 h-4 text-[#073653]" />
+                <Clock className={`w-4 h-4 ${activeTab === 'ORDERS' ? 'text-[#00B894]' : 'text-[#64839A]'}`} />
                 <span>My Orders</span>
               </div>
               {activeOrders.length > 0 && (
-                <span className="w-5 h-5 rounded-full text-[11px] font-black bg-[#00B894] text-white flex items-center justify-center">
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                  activeTab === 'ORDERS' ? 'bg-[#00B894] text-white' : 'bg-[#00B894] text-white'
+                }`}>
                   {activeOrders.length}
                 </span>
               )}
@@ -1119,18 +1217,20 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
             {/* 4. Notifications */}
             <button
               onClick={() => setActiveTab('NOTIFICATIONS')}
-              className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
                 activeTab === 'NOTIFICATIONS'
-                  ? 'bg-[#C6EBD9] text-[#073653] shadow-sm'
-                  : 'text-[#073653] hover:bg-[#BFEBDD]/50'
+                  ? 'bg-white/95 text-[#073653] shadow-sm border border-[#BFEBDD]/80 font-black'
+                  : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
               }`}
             >
               <div className="flex items-center gap-3">
-                <Bell className="w-4 h-4 text-[#073653]" />
+                <Bell className={`w-4 h-4 ${activeTab === 'NOTIFICATIONS' ? 'text-[#00B894]' : 'text-[#64839A]'}`} />
                 <span>Notifications</span>
               </div>
               {unreadNotificationsCount > 0 && (
-                <span className="w-5 h-5 rounded-full text-[11px] font-black bg-[#FF5A5F] text-white flex items-center justify-center">
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                  activeTab === 'NOTIFICATIONS' ? 'bg-[#00B894] text-white' : 'bg-rose-500 text-white'
+                }`}>
                   {unreadNotificationsCount}
                 </span>
               )}
@@ -1139,25 +1239,25 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
             {/* 5. Account Settings */}
             <button
               onClick={() => setActiveTab('ACCOUNT')}
-              className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
+              className={`w-full flex items-center justify-between px-3.5 py-3 rounded-2xl text-xs font-bold transition min-h-[44px] ${
                 activeTab === 'ACCOUNT'
-                  ? 'bg-[#C6EBD9] text-[#073653] shadow-sm'
-                  : 'text-[#073653] hover:bg-[#BFEBDD]/50'
+                  ? 'bg-white/95 text-[#073653] shadow-sm border border-[#BFEBDD]/80 font-black'
+                  : 'text-[#073653] hover:bg-white/60 hover:text-[#073653]'
               }`}
             >
               <div className="flex items-center gap-3">
-                <User className="w-4 h-4 text-[#073653]" />
+                <User className={`w-4 h-4 ${activeTab === 'ACCOUNT' ? 'text-[#00B894]' : 'text-[#64839A]'}`} />
                 <span>Account Settings</span>
               </div>
             </button>
           </nav>
         </div>
 
-        {/* Bottom Slogan & Botanical Leaf Graphic */}
-        <div className="relative pt-6 pb-2 z-10">
+        {/* Bottom Slogan & Botanical Leaf Graphic matching Seller Sidebar */}
+        <div className="relative pt-6 pb-2 z-10 border-t border-[#BFEBDD]/60 mt-4">
           <div className="text-left pl-1">
             <p className="text-xs font-extrabold text-[#073653] tracking-wide">Less Queue</p>
-            <p className="text-[11px] font-bold text-[#073653] tracking-tight">More Campus Time</p>
+            <p className="text-[11px] font-bold text-[#073653] tracking-tight">MORE CAMPUS TIME</p>
             <div className="w-8 h-0.5 bg-[#00B894] rounded-full mt-1.5" />
           </div>
         </div>
@@ -1256,8 +1356,19 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
               </div>
             </div>
 
-            {/* Right Header: Notifications + Customer Profile (Visible & Accessible on mobile & desktop) */}
+            {/* Right Header: Refresh Button + Notifications + Customer Profile */}
             <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+              {/* Manual Live Refresh Control (Requirement 5) */}
+              <button
+                onClick={handleManualRefresh}
+                disabled={isManualRefreshing}
+                className="p-2 sm:p-2.5 rounded-full bg-white/90 border border-[#BFEBDD]/70 text-[#073653] hover:bg-white relative transition shadow-sm min-h-[38px] min-w-[38px] sm:min-h-[40px] sm:min-w-[40px] flex items-center justify-center shrink-0 cursor-pointer disabled:opacity-60"
+                title="Refresh menu, orders and live status"
+                aria-label="Refresh menu, orders and live status"
+              >
+                <RotateCcw className={`w-4 h-4 text-[#64839A] ${isManualRefreshing ? 'animate-spin text-[#00B894]' : ''}`} />
+              </button>
+
               {/* Notification Bell */}
               <button
                 onClick={() => setActiveTab('NOTIFICATIONS')}
@@ -1270,7 +1381,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                 )}
               </button>
 
-              {/* Customer Profile Pill (Visible on top right on mobile and desktop) */}
+              {/* Customer Profile Pill (Requirement 7: remove Student, show username and campus) */}
               <div className="relative shrink-0">
                 <button
                   onClick={() => setShowProfileDropdown(!showProfileDropdown)}
@@ -1280,9 +1391,13 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                   <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#DFF3E8] text-[#073653] font-black flex items-center justify-center text-xs border border-[#BFEBDD]/60 shrink-0">
                     {user?.name ? user.name.charAt(0).toUpperCase() : 'S'}
                   </div>
-                  <div className="text-left text-xs pr-1 hidden sm:block">
-                    <p className="font-extrabold text-[#073653] leading-tight truncate max-w-[100px]">{user?.name || 'Siya Sen'}</p>
-                    <p className="text-[10px] text-[#64839A] font-medium leading-tight">Student</p>
+                  <div className="text-left text-xs pr-1">
+                    <p className="font-extrabold text-[#073653] leading-tight truncate max-w-[120px]">
+                      {user?.name || (user?.username ? `@${user.username}` : 'Customer')}
+                    </p>
+                    <p className="text-[10px] text-[#64839A] font-medium leading-tight truncate max-w-[130px]">
+                      {user?.campus || user?.collegeName || 'IPCW, University of Delhi'}
+                    </p>
                   </div>
                   <ChevronDown className="w-3.5 h-3.5 text-[#64839A]" />
                 </button>
@@ -1295,12 +1410,8 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                       <p className="text-[11px] font-bold text-[#64839A] mt-0.5">{user?.username || user?.email}</p>
                       <div className="mt-2 pt-2 border-t border-[#DFF3E8] space-y-1 text-[11px] text-[#64839A]">
                         <div className="flex justify-between items-center">
-                          <span>Role:</span>
-                          <span className="font-extrabold text-[#073653] uppercase px-2 py-0.5 bg-[#DFF3E8] rounded text-[10px]">Student</span>
-                        </div>
-                        <div className="flex justify-between items-center">
                           <span>Campus:</span>
-                          <span className="font-bold text-[#073653]">IPCW (Delhi Univ.)</span>
+                          <span className="font-bold text-[#073653] truncate max-w-[150px]">{user?.campus || user?.collegeName || 'IPCW, University of Delhi'}</span>
                         </div>
                       </div>
                     </div>
@@ -1425,18 +1536,18 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
               {/* Center: Search Field */}
               <div className="relative flex-1 max-w-lg">
-                <Search className="w-3.5 h-3.5 text-slate-400/80 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-10" />
                 <input
                   type="text"
                   placeholder="आज क्या खाएं?"
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full pl-8 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
+                  className="w-full pl-9 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm relative z-0"
                 />
                 {searchQuery && (
                   <button
                     onClick={() => setSearchQuery('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 z-10"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -1490,18 +1601,18 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
               {/* Row 1: Search Box + Grid & List Buttons immediately to the right */}
               <div className="flex items-center gap-2 w-full">
                 <div className="relative flex-1">
-                  <Search className="w-3.5 h-3.5 text-slate-400/80 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none z-10" />
                   <input
                     type="text"
                     placeholder="आज क्या खाएं?"
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
-                    className="w-full pl-8 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
+                    className="w-full pl-9 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm relative z-0"
                   />
                   {searchQuery && (
                     <button
                       onClick={() => setSearchQuery('')}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 z-10"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
@@ -2155,10 +2266,17 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                     <span className="text-[#0B725C] text-lg font-black">₹{cartTotal.toFixed(2)}</span>
                   </div>
 
+                  {canteenStatus === 'CLOSED' && (
+                    <div className="p-2.5 rounded-xl bg-blue-50/80 border border-blue-200/60 text-blue-800 text-xs flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-blue-600 shrink-0" />
+                      <span>Canteen is currently closed. Your order request will be sent to the seller for approval.</span>
+                    </div>
+                  )}
+
                   <button
                     onClick={handlePlaceOrder}
-                    disabled={isSubmittingOrder || (selectedPickupDay === 'TODAY' && canteenStatus !== 'OPEN') || Boolean(timeValidationError)}
-                    className="w-full py-3.5 min-h-[48px] px-4 rounded-xl text-white font-bold text-sm bg-[#0B725C] hover:bg-[#095E4B] shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    disabled={isSubmittingOrder || Boolean(timeValidationError) || cart.length === 0}
+                    className="w-full py-3.5 min-h-[48px] px-4 rounded-xl text-white font-bold text-sm bg-[#0B725C] hover:bg-[#095E4B] shadow-sm transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 cursor-pointer"
                   >
                     {isSubmittingOrder ? (
                       <>
@@ -2615,12 +2733,12 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                 <div className="flex justify-between items-center py-2 border-b border-slate-50">
                   <span className="text-[#64839A]">Account Role</span>
                   <span className="font-bold text-[#073653] uppercase px-2.5 py-0.5 bg-[#DFF3E8] rounded-full text-[10px]">
-                    Student / Customer
+                    Customer
                   </span>
                 </div>
                 <div className="flex justify-between items-center py-2 border-b border-slate-50">
-                  <span className="text-[#64839A]">Institution</span>
-                  <span className="font-bold text-[#073653]">Indraprastha College for Women (IPCW)</span>
+                  <span className="text-[#64839A]">Campus / College</span>
+                  <span className="font-bold text-[#073653]">{user?.campus || user?.collegeName || 'Indraprastha College for Women (IPCW)'}</span>
                 </div>
                 <div className="flex justify-between items-center py-2 border-b border-slate-50">
                   <span className="text-[#64839A]">Current Outlet</span>

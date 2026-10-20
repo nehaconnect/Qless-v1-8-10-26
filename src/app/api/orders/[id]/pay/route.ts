@@ -7,7 +7,7 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   try {
-    const authUser = await requireAuth();
+    const authUser = await requireAuth(req.headers);
     const orderId = params.id;
     let body: any = {};
     try {

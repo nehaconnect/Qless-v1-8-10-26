@@ -274,7 +274,7 @@ export async function createOrder(input: CreateOrderInput) {
   const resolvedDateStr = timeValidation.dateStr || getISTTodayString(simulatedNow || new Date());
   const pickupDate = canonicalTimeToISTDate(timeValidation.canonical, resolvedDateStr);
 
-  // 2. Validate Canteen & Operating Hours
+  // 2. Validate Canteen
   const canteen = await db.query.canteens.findFirst({
     where: eq(canteens.id, canteenId)
   });
@@ -283,18 +283,11 @@ export async function createOrder(input: CreateOrderInput) {
     throw new Error('Canteen is not available');
   }
 
-  // If ordering for TODAY, enforce that the canteen is currently OPEN for today's orders.
-  // If ordering for TOMORROW, pre-ordering is allowed even after closing hours (e.g. at 10 PM tonight for tomorrow 8 AM).
-  if (!timeValidation.isTomorrow) {
-    const { effectiveStatus } = getEffectiveCanteenStatus(canteen, simulatedNow || new Date());
-
-    if (effectiveStatus === 'CLOSED') {
-      throw new Error('Canteen is closed. Orders are currently disabled.');
-    }
-
-    if (effectiveStatus === 'TOO_BUSY') {
-      throw new Error('Canteen is currently busy. New orders are temporarily unavailable.');
-    }
+  // Pre-orders and order requests can be submitted outside operating hours for any valid future slot (8:00 AM - 5:00 PM today or tomorrow).
+  // If the canteen is during active operating hours and the seller manually set it to TOO_BUSY, pause new immediate orders for today.
+  const { effectiveStatus, isOperatingHours } = getEffectiveCanteenStatus(canteen, simulatedNow || new Date());
+  if (!timeValidation.isTomorrow && isOperatingHours && effectiveStatus === 'TOO_BUSY') {
+    throw new Error('Canteen is currently busy. New orders for today are temporarily paused by the seller.');
   }
 
   // 3. Fetch Authoritative Menu Prices Server-Side

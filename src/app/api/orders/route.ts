@@ -7,7 +7,7 @@ import { toCanonicalPickupTime, formatPickupTimeDisplay, getISTDateRangeBounds }
 
 export async function GET(req: NextRequest) {
   try {
-    const authUser = await requireAuth();
+    const authUser = await requireAuth(req.headers);
 
     // Idempotent automatic transition of orders uncollected 2 hours past pickup time
     await autoExpireUncollectedOrders(authUser.effectiveRole === 'SELLER' ? authUser.canteenId : undefined);
@@ -247,7 +247,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const authUser = await requireAuth();
+    const authUser = await requireAuth(req.headers);
     const body = await req.json();
     const { canteenId, items, exactPickupTime, idempotencyKey, simulatedNow } = body;
 
@@ -280,6 +280,10 @@ export async function POST(req: NextRequest) {
       alreadyCreated: result.alreadyCreated,
     });
   } catch (err: any) {
-    return NextResponse.json({ error: err.message }, { status: 400 });
+    const isUnauthorized = err.message?.includes('UNAUTHORIZED') || err.message?.includes('Sign in required');
+    return NextResponse.json(
+      { error: isUnauthorized ? 'UNAUTHORIZED: Sign in required. Please sign in to place an order.' : err.message },
+      { status: isUnauthorized ? 401 : 400 }
+    );
   }
 }

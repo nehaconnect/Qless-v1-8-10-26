@@ -5,7 +5,7 @@ import { requireAuth } from '@/lib/auth/server';
 
 export async function DELETE(req: NextRequest) {
   try {
-    const authUser = await requireAuth();
+    const authUser = await requireAuth(req.headers);
 
     if (authUser.role !== 'CUSTOMER') {
       return NextResponse.json({ error: 'Only customers can self-delete their account' }, { status: 403 });

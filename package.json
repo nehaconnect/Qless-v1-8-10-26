@@ -16,6 +16,7 @@
     "test:signout": "tsx scripts/test-signout-lifecycle.ts",
     "test:cancellation": "tsx scripts/test-seller-cancellation-and-history.ts",
     "test:onboarding": "tsx scripts/test-seller-onboarding.ts",
+    "test:prompt4": "tsx scripts/test-prompt4.ts",
     "test:smoke": "tsx scripts/smoke-test.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate"
