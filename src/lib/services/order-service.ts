@@ -1149,6 +1149,47 @@ export async function sellerMarkBatchReady(batchId: string, sellerUserId: string
 }
 
 /**
+ * Seller begins preparation for an individual order
+ */
+export async function sellerStartOrderPrep(orderId: string, sellerUserId: string, sellerCanteenId?: string) {
+  const order = await db.query.orders.findFirst({
+    where: eq(orders.id, orderId)
+  });
+
+  if (!order) throw new Error('Order not found');
+  if (sellerCanteenId && order.canteenId !== sellerCanteenId) {
+    throw new Error('Forbidden: Cannot start preparation for another canteen');
+  }
+  if (order.status === 'CANCELLED' || order.status === 'REJECTED') {
+    throw new Error(`Cannot start preparation for order in ${order.status} status`);
+  }
+
+  const [inPrep] = await db.update(orders)
+    .set({ status: 'PREPARING', prepStartedAt: new Date(), updatedAt: new Date() })
+    .where(eq(orders.id, orderId))
+    .returning();
+
+  await db.insert(orderStatusHistory).values({
+    orderId,
+    fromStatus: order.status,
+    toStatus: 'PREPARING',
+    changedByUserId: sellerUserId,
+    actorRole: 'SELLER',
+    reason: 'Kitchen started preparation for order',
+  });
+
+  await db.insert(notifications).values({
+    userId: order.customerId,
+    orderId,
+    title: 'Preparation Started',
+    message: 'The kitchen has started cooking your order!',
+    type: 'PREPARING',
+  });
+
+  return inPrep;
+}
+
+/**
  * Seller marks an order READY
  */
 export async function sellerMarkOrderReady(orderId: string, sellerUserId: string, sellerCanteenId?: string) {

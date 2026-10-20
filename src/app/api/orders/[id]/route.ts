@@ -8,6 +8,7 @@ import {
   sellerCancelUnpaidOrder,
   sellerSuggestTime,
   customerRespondTimeSuggestion,
+  sellerStartOrderPrep,
   sellerMarkOrderReady,
   decryptPickupCode,
 } from '@/lib/services/order-service';
@@ -134,6 +135,13 @@ export async function PATCH(
       case 'CUSTOMER_RESPOND_TIME':
         const responseAction = body.responseAction || (body.accept ? 'ACCEPT' : 'DECLINE');
         result = await customerRespondTimeSuggestion(orderId, authUser.id, responseAction, body.counterTime);
+        break;
+
+      case 'SELLER_START_PREP':
+        if (authUser.effectiveRole !== 'SELLER' && authUser.effectiveRole !== 'ADMIN') {
+          return NextResponse.json({ error: 'Forbidden: Seller access required' }, { status: 403 });
+        }
+        result = await sellerStartOrderPrep(orderId, authUser.id, sellerCanteen);
         break;
 
       case 'SELLER_READY':

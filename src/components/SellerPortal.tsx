@@ -50,6 +50,9 @@ import {
   Home,
   Settings,
   Crop,
+  LayoutGrid,
+  List,
+  Maximize2,
 } from 'lucide-react';
 import { QLessLogo } from './QLessLogo';
 
@@ -76,6 +79,7 @@ interface Order {
   rejectionNote?: string | null;
   batch: { id: string; displayLabel: string; startTime: string; endTime: string } | null;
   items: OrderItem[];
+  pickupCode?: string | null;
   createdAt: string;
 }
 
@@ -279,6 +283,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   const profileDropdownRef = React.useRef<HTMLDivElement>(null);
   const notificationsDropdownRef = React.useRef<HTMLDivElement>(null);
   const canteenDropdownRef = React.useRef<HTMLDivElement>(null);
+  const prepDatePickerRef = React.useRef<HTMLDivElement>(null);
 
   // Horizontal Category Scroll Ref
   const categoryScrollRef = React.useRef<HTMLDivElement>(null);
@@ -364,6 +369,37 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   const [dateFilterPreset, setDateFilterPreset] = useState<'TODAY' | 'YESTERDAY' | 'LAST_7_DAYS' | 'THIS_MONTH' | 'CUSTOM'>('TODAY');
   const [startDateStr, setStartDateStr] = useState<string>(getTodayISTString());
   const [endDateStr, setEndDateStr] = useState<string>(getTodayISTString());
+
+  // Kitchen Preparation Batches State (All Batches, Pending, In Preparation, Ready)
+  const [prepTab, setPrepTab] = useState<'ALL' | 'PENDING' | 'PREPARING' | 'READY'>('ALL');
+  const [prepViewMode, setPrepViewMode] = useState<'CARD' | 'LIST'>('CARD');
+  const [prepDate, setPrepDate] = useState<string>(getTodayISTString());
+  const [showPrepDatePicker, setShowPrepDatePicker] = useState(false);
+  const [selectedCarouselBatchId, setSelectedCarouselBatchId] = useState<string | null>(null);
+  const [carouselScrollIndex, setCarouselScrollIndex] = useState(0);
+  const [prepHistoricalOrders, setPrepHistoricalOrders] = useState<Order[]>([]);
+  const [isLoadingHistorical, setIsLoadingHistorical] = useState(false);
+  const [expandedPrepBatches, setExpandedPrepBatches] = useState<Record<string, boolean>>({});
+
+  const formatPrepDisplayDate = (dateStr: string) => {
+    try {
+      const today = getTodayISTString();
+      const yest = getRelativeISTDateString(-1);
+      const [y, m, d] = dateStr.split('-');
+      const dateObj = new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10));
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const formatted = `${parseInt(d, 10)} ${monthNames[dateObj.getMonth()]} ${y}`;
+      if (dateStr === today) {
+        return `Today, ${formatted}`;
+      }
+      if (dateStr === yest) {
+        return `Yesterday, ${formatted}`;
+      }
+      return formatted;
+    } catch {
+      return dateStr;
+    }
+  };
   const [summaryData, setSummaryData] = useState<any>({
     totalOrders: 0,
     ordersCollected: 0,
@@ -476,6 +512,9 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       if (showCanteenDropdown && canteenDropdownRef.current && !canteenDropdownRef.current.contains(target)) {
         setShowCanteenDropdown(false);
       }
+      if (showPrepDatePicker && prepDatePickerRef.current && !prepDatePickerRef.current.contains(target)) {
+        setShowPrepDatePicker(false);
+      }
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -484,6 +523,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
         setShowProfileDropdown(false);
         setShowNotifications(false);
         setShowCanteenDropdown(false);
+        setShowPrepDatePicker(false);
       }
     };
 
@@ -493,7 +533,44 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [showStatusDropdown, showProfileDropdown, showNotifications, showCanteenDropdown]);
+  }, [showStatusDropdown, showProfileDropdown, showNotifications, showCanteenDropdown, showPrepDatePicker]);
+
+  // Fetch historical orders when seller inspects a previous date on PREPARATION tab
+  useEffect(() => {
+    if (tab !== 'PREPARATION') return;
+    const today = getTodayISTString();
+    if (prepDate === today) {
+      setPrepHistoricalOrders([]);
+      setIsLoadingHistorical(false);
+      return;
+    }
+
+    let isMounted = true;
+    setIsLoadingHistorical(true);
+
+    fetchWithViewAs(`/api/orders?startDate=${prepDate}&endDate=${prepDate}`)
+      .then(res => res.json())
+      .then(data => {
+        if (!isMounted) return;
+        if (data && Array.isArray(data.orders)) {
+          setPrepHistoricalOrders(data.orders);
+        } else {
+          setPrepHistoricalOrders([]);
+        }
+      })
+      .catch(err => {
+        if (!isMounted) return;
+        console.error('Error fetching historical prep orders:', err);
+        setPrepHistoricalOrders([]);
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingHistorical(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [tab, prepDate]);
 
   const clearMessages = () => {
     setPortalError(null);
@@ -728,6 +805,44 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
         return copy;
       });
     }
+  };
+
+  const handleStartOrderPrep = async (orderId: string) => {
+    if (actionLoading[orderId]) return;
+    clearMessages();
+    setActionLoading(prev => ({ ...prev, [orderId]: 'STARTING_PREP' }));
+
+    try {
+      const res = await fetch(`/api/orders/${orderId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'SELLER_START_PREP' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to start preparation.');
+      setPortalSuccess('Order marked IN PREPARATION!');
+      await refreshData(false);
+    } catch (err: any) {
+      setPortalError(err.message);
+    } finally {
+      setActionLoading(prev => {
+        const copy = { ...prev };
+        delete copy[orderId];
+        return copy;
+      });
+    }
+  };
+
+  const handleCollectReadyOrder = async (order: Order) => {
+    if (actionLoading[order.id]) return;
+    clearMessages();
+    const code = order.pickupCode;
+    if (!code) {
+      setVerifyTargetOrderId(order.id);
+      setTab('PICKUP');
+      return;
+    }
+    await handleVerifyPickupCode(order.id, code);
   };
 
   // -------------------------------------------------------------
@@ -1174,6 +1289,152 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   }, [ordersList, batches]);
 
   // -------------------------------------------------------------
+  // Kitchen Preparation Batches Computation (4 Views)
+  // -------------------------------------------------------------
+  const isPrepDateToday = prepDate === getTodayISTString();
+
+  const prepSourceOrders = useMemo(() => {
+    return isPrepDateToday ? ordersList : prepHistoricalOrders;
+  }, [isPrepDateToday, ordersList, prepHistoricalOrders]);
+
+  const prepTabCounts = useMemo(() => {
+    if (!isPrepDateToday) {
+      const historicalReady = prepSourceOrders.filter(o => ['READY', 'READY_FOR_PICKUP', 'COLLECTED'].includes(o.status));
+      return {
+        all: historicalReady.length,
+        pending: 0,
+        preparing: 0,
+        ready: historicalReady.length,
+      };
+    }
+    const pending = prepSourceOrders.filter(o => o.status === 'CONFIRMED').length;
+    const preparing = prepSourceOrders.filter(o => o.status === 'PREPARING').length;
+    const ready = prepSourceOrders.filter(o => ['READY', 'READY_FOR_PICKUP'].includes(o.status)).length;
+    return {
+      all: pending + preparing + ready,
+      pending,
+      preparing,
+      ready,
+    };
+  }, [isPrepDateToday, prepSourceOrders]);
+
+  const prepFilteredOrders = useMemo(() => {
+    if (!isPrepDateToday) {
+      if (prepTab === 'PENDING' || prepTab === 'PREPARING') {
+        return [];
+      }
+      return prepSourceOrders.filter(o => ['READY', 'READY_FOR_PICKUP', 'COLLECTED'].includes(o.status));
+    }
+
+    if (prepTab === 'PENDING') {
+      return prepSourceOrders.filter(o => o.status === 'CONFIRMED');
+    }
+    if (prepTab === 'PREPARING') {
+      return prepSourceOrders.filter(o => o.status === 'PREPARING');
+    }
+    if (prepTab === 'READY') {
+      return prepSourceOrders.filter(o => ['READY', 'READY_FOR_PICKUP'].includes(o.status));
+    }
+    // ALL
+    return prepSourceOrders.filter(o => ['CONFIRMED', 'PREPARING', 'READY', 'READY_FOR_PICKUP'].includes(o.status));
+  }, [isPrepDateToday, prepTab, prepSourceOrders]);
+
+  const prepBatchGroups = useMemo(() => {
+    const groupMap = new Map<string, {
+      batchKey: string;
+      batchLabel: string;
+      startTime: string;
+      endTime: string;
+      capacity: number;
+      reservedCount: number;
+      orders: Order[];
+      aggregateItems: Record<string, number>;
+      pendingCount: number;
+      preparingCount: number;
+      readyCount: number;
+      status: 'PENDING' | 'PREPARING' | 'READY';
+    }>();
+
+    for (const ord of prepFilteredOrders) {
+      let bKey = ord.batchId;
+      const matchedBatch = batches.find(b => b.id === ord.batchId);
+      let label = ord.batch?.displayLabel || matchedBatch?.displayLabel;
+      let startTime = ord.batch?.startTime || matchedBatch?.startTime;
+      let endTime = ord.batch?.endTime || matchedBatch?.endTime;
+
+      if (!label && ord.exactPickupTime) {
+        try {
+          const calc = calculate15MinBatch(ord.exactPickupTime);
+          label = calc.displayLabel;
+          startTime = calc.startTime;
+          endTime = calc.endTime;
+        } catch {
+          label = '15-min Batch';
+        }
+      }
+
+      if (!bKey) {
+        bKey = startTime || 'unassigned';
+      }
+
+      if (!groupMap.has(bKey)) {
+        groupMap.set(bKey, {
+          batchKey: bKey,
+          batchLabel: label || '15-min Batch',
+          startTime: startTime || '00:00',
+          endTime: endTime || '00:00',
+          capacity: matchedBatch?.capacity || 10,
+          reservedCount: matchedBatch?.reservedCount || 0,
+          orders: [],
+          aggregateItems: {},
+          pendingCount: 0,
+          preparingCount: 0,
+          readyCount: 0,
+          status: 'PENDING',
+        });
+      }
+
+      const grp = groupMap.get(bKey)!;
+      grp.orders.push(ord);
+
+      if (ord.status === 'CONFIRMED') grp.pendingCount += 1;
+      else if (ord.status === 'PREPARING') grp.preparingCount += 1;
+      else if (['READY', 'READY_FOR_PICKUP', 'COLLECTED'].includes(ord.status)) grp.readyCount += 1;
+
+      for (const it of ord.items) {
+        grp.aggregateItems[it.itemName] = (grp.aggregateItems[it.itemName] || 0) + it.quantity;
+      }
+    }
+
+    const groups = Array.from(groupMap.values()).map(grp => {
+      if (grp.preparingCount > 0) {
+        grp.status = 'PREPARING';
+      } else if (grp.pendingCount > 0) {
+        grp.status = 'PENDING';
+      } else {
+        grp.status = 'READY';
+      }
+      return grp;
+    });
+
+    return groups.sort((a, b) => a.startTime.localeCompare(b.startTime));
+  }, [prepFilteredOrders, batches]);
+
+  const togglePrepBatchAccordion = (batchKey: string) => {
+    setExpandedPrepBatches(prev => ({
+      ...prev,
+      [batchKey]: prev[batchKey] === undefined ? false : !prev[batchKey]
+    }));
+  };
+
+  const isPrepBatchExpanded = (batchKey: string) => {
+    if (selectedCarouselBatchId && selectedCarouselBatchId === batchKey) {
+      return true;
+    }
+    return expandedPrepBatches[batchKey] !== false;
+  };
+
+  // -------------------------------------------------------------
   // Expandable/Collapsible 15-Minute Batch Groups for Orders Screen
   // -------------------------------------------------------------
   const batchGroups = useMemo(() => {
@@ -1432,11 +1693,11 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
               <ChefHat className="w-4 h-4" />
               <span>Preparation</span>
             </div>
-            {batchOrdersMap.length > 0 && (
+            {(prepTabCounts.pending + prepTabCounts.preparing > 0 || batchOrdersMap.length > 0) && (
               <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
                 tab === 'PREPARATION' ? 'bg-white text-[#00B894]' : 'bg-amber-500 text-white'
               }`}>
-                {batchOrdersMap.length}
+                {prepTabCounts.pending + prepTabCounts.preparing || batchOrdersMap.length}
               </span>
             )}
           </button>
@@ -2451,123 +2712,645 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
             {/* ========================================================= */}
             {/* 2. PREPARATION SECTION (15-min Batch Containers) */}
             {/* ========================================================= */}
+            {/* ========================================================= */}
+            {/* 2. PREPARATION SECTION (15-min Batch Containers - 4 Views) */}
+            {/* ========================================================= */}
             {tab === 'PREPARATION' && (
               <div className="space-y-6">
-                <div>
-                  <h2 className="text-base font-extrabold text-text-primary">Kitchen Preparation Batches</h2>
-                  <p className="text-xs text-text-secondary">
-                    Continuous 15-minute kitchen production containers with aggregated item prep totals.
-                  </p>
-                </div>
-
-                {batchOrdersMap.length === 0 ? (
-                  <div className="bg-surface rounded-3xl p-12 text-center border border-slate-200 shadow-sm">
-                    <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mx-auto mb-3">
-                      <ChefHat className="w-8 h-8" />
-                    </div>
-                    <h3 className="text-sm font-extrabold text-text-primary">No active preparation batches.</h3>
-                    <p className="text-xs text-text-secondary mt-1 max-w-sm mx-auto">
-                      Confirmed orders will be automatically aggregated into 15-minute preparation containers here.
+                {/* Header with Title and Date Selector Dropdown */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-base font-extrabold text-[#073653]">Kitchen Preparation Batches</h2>
+                    <p className="text-xs text-[#64839A] mt-0.5">
+                      Continuous 15-minute kitchen production containers with aggregated item prep totals.
                     </p>
                   </div>
-                ) : (
-                  <div className="space-y-6">
-                    {batchOrdersMap.map(({ batch, orders, itemsTally }) => {
-                      const isBatchStarting = actionLoading[batch.id] === 'STARTING';
-                      const isBatchMarkingReady = actionLoading[batch.id] === 'MARKING_BATCH_READY';
+
+                  {/* Date Selector Dropdown */}
+                  <div ref={prepDatePickerRef} className="relative self-start sm:self-auto">
+                    <button
+                      type="button"
+                      onClick={() => setShowPrepDatePicker(prev => !prev)}
+                      className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black bg-white/90 hover:bg-white text-[#073653] border border-slate-200/90 shadow-soft transition cursor-pointer"
+                    >
+                      <Calendar className="w-4 h-4 text-[#00B894]" />
+                      <span>{formatPrepDisplayDate(prepDate)}</span>
+                      <ChevronDown
+                        className={`w-3.5 h-3.5 text-slate-400 transition-transform ${
+                          showPrepDatePicker ? 'rotate-180' : ''
+                        }`}
+                      />
+                    </button>
+
+                    {showPrepDatePicker && (
+                      <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 p-3 z-50 animate-in fade-in zoom-in-95 duration-100">
+                        <div className="text-[11px] font-black uppercase tracking-wider text-slate-400 mb-2 px-1">
+                          Select Preparation Date
+                        </div>
+                        <div className="space-y-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPrepDate(getTodayISTString());
+                              setShowPrepDatePicker(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 rounded-xl text-xs font-bold transition flex items-center justify-between cursor-pointer ${
+                              prepDate === getTodayISTString()
+                                ? 'bg-[#E6F9F4] text-[#00B894] font-black'
+                                : 'text-[#073653] hover:bg-slate-50'
+                            }`}
+                          >
+                            <span>Today</span>
+                            <span className="text-[11px] text-slate-400">
+                              {formatPrepDisplayDate(getTodayISTString())}
+                            </span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPrepDate(getRelativeISTDateString(-1));
+                              setShowPrepDatePicker(false);
+                            }}
+                            className={`w-full text-left px-3 py-2 rounded-xl text-xs font-bold transition flex items-center justify-between cursor-pointer ${
+                              prepDate === getRelativeISTDateString(-1)
+                                ? 'bg-[#E6F9F4] text-[#00B894] font-black'
+                                : 'text-[#073653] hover:bg-slate-50'
+                            }`}
+                          >
+                            <span>Yesterday</span>
+                            <span className="text-[11px] text-slate-400">
+                              {formatPrepDisplayDate(getRelativeISTDateString(-1))}
+                            </span>
+                          </button>
+                        </div>
+
+                        <div className="mt-3 pt-3 border-t border-slate-100">
+                          <label className="block text-[11px] font-bold text-slate-500 mb-1.5 px-1">
+                            Pick Custom Date
+                          </label>
+                          <input
+                            type="date"
+                            value={prepDate}
+                            max={getTodayISTString()}
+                            onChange={(e) => {
+                              if (e.target.value) {
+                                setPrepDate(e.target.value);
+                                setShowPrepDatePicker(false);
+                              }
+                            }}
+                            className="w-full px-3 py-1.5 text-xs font-bold text-[#073653] bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#00B894]"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Filter Tabs & View Mode Row */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  {/* 4 Filter Pills */}
+                  <div className="flex items-center gap-2 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
+                    <button
+                      type="button"
+                      onClick={() => setPrepTab('ALL')}
+                      className={`px-4 py-2 rounded-full text-xs transition cursor-pointer whitespace-nowrap ${
+                        prepTab === 'ALL'
+                          ? 'bg-[#00B894] text-white font-black shadow-soft'
+                          : 'bg-white/80 hover:bg-white text-slate-700 font-bold border border-slate-200/80'
+                      }`}
+                    >
+                      All Batches ({prepTabCounts.all})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrepTab('PENDING')}
+                      className={`px-4 py-2 rounded-full text-xs transition cursor-pointer whitespace-nowrap ${
+                        prepTab === 'PENDING'
+                          ? 'bg-[#00B894] text-white font-black shadow-soft'
+                          : 'bg-white/80 hover:bg-white text-slate-700 font-bold border border-slate-200/80'
+                      }`}
+                    >
+                      Pending ({prepTabCounts.pending})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrepTab('PREPARING')}
+                      className={`px-4 py-2 rounded-full text-xs transition cursor-pointer whitespace-nowrap ${
+                        prepTab === 'PREPARING'
+                          ? 'bg-[#00B894] text-white font-black shadow-soft'
+                          : 'bg-white/80 hover:bg-white text-slate-700 font-bold border border-slate-200/80'
+                      }`}
+                    >
+                      In Preparation ({prepTabCounts.preparing})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrepTab('READY')}
+                      className={`px-4 py-2 rounded-full text-xs transition cursor-pointer whitespace-nowrap ${
+                        prepTab === 'READY'
+                          ? 'bg-[#00B894] text-white font-black shadow-soft'
+                          : 'bg-white/80 hover:bg-white text-slate-700 font-bold border border-slate-200/80'
+                      }`}
+                    >
+                      Ready ({prepTabCounts.ready})
+                    </button>
+                  </div>
+
+                  {/* View Mode Toggle: Card View / List View */}
+                  <div className="flex items-center self-end sm:self-auto bg-white/80 border border-slate-200/80 rounded-xl p-1 shadow-2xs">
+                    <button
+                      type="button"
+                      onClick={() => setPrepViewMode('CARD')}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        prepViewMode === 'CARD'
+                          ? 'bg-[#00B894] text-white shadow-2xs'
+                          : 'text-slate-600 hover:text-[#073653]'
+                      }`}
+                      title="Card View"
+                    >
+                      <LayoutGrid className="w-3.5 h-3.5" />
+                      <span>Card View</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPrepViewMode('LIST')}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        prepViewMode === 'LIST'
+                          ? 'bg-[#00B894] text-white shadow-2xs'
+                          : 'text-slate-600 hover:text-[#073653]'
+                      }`}
+                      title="List View"
+                    >
+                      <List className="w-3.5 h-3.5" />
+                      <span>List View</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Horizontal Batch Quick Slider Carousel (Tabs: All Batches, In Preparation, Ready) */}
+                {prepBatchGroups.length > 0 && (
+                  <div className="bg-white/70 backdrop-blur-md rounded-2xl border border-slate-200/80 p-3 shadow-2xs">
+                    <div className="flex items-center justify-between mb-2 px-1">
+                      <span className="text-[11px] font-black uppercase tracking-wider text-[#073653] flex items-center gap-1.5">
+                        <Flame className="w-3.5 h-3.5 text-[#00B894]" />
+                        Active Kitchen Batches
+                      </span>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const el = document.getElementById('prep-batch-carousel');
+                            if (el) el.scrollBy({ left: -220, behavior: 'smooth' });
+                          }}
+                          className="w-7 h-7 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-600 shadow-2xs transition cursor-pointer"
+                          title="Scroll left"
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const el = document.getElementById('prep-batch-carousel');
+                            if (el) el.scrollBy({ left: 220, behavior: 'smooth' });
+                          }}
+                          className="w-7 h-7 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 flex items-center justify-center text-slate-600 shadow-2xs transition cursor-pointer"
+                          title="Scroll right"
+                        >
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <div
+                      id="prep-batch-carousel"
+                      className="flex items-center gap-3 overflow-x-auto pb-1 scrollbar-none scroll-smooth"
+                    >
+                      {prepBatchGroups.map((grp) => {
+                        const isSelected = selectedCarouselBatchId === grp.batchKey;
+                        return (
+                          <div
+                            key={grp.batchKey}
+                            onClick={() => {
+                              setSelectedCarouselBatchId(isSelected ? null : grp.batchKey);
+                              setExpandedPrepBatches(prev => ({ ...prev, [grp.batchKey]: true }));
+                            }}
+                            className={`shrink-0 w-60 p-3 rounded-xl border transition-all cursor-pointer ${
+                              isSelected
+                                ? 'border-2 border-[#00B894] bg-[#E6F9F4]/70 shadow-soft'
+                                : 'border-slate-200/90 bg-white hover:border-[#00B894]/40 hover:shadow-2xs'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-black text-[#073653] truncate">{grp.batchLabel}</span>
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-[#E6F9F4] text-[#00B894]">
+                                {grp.orders.length} Orders
+                              </span>
+                            </div>
+                            <div className="mt-1 text-[11px] text-slate-500 font-medium truncate">
+                              {Object.entries(grp.aggregateItems).map(([name, qty]) => `${name} (${qty})`).join('  ') || 'No items'}
+                            </div>
+                            <div className="mt-2 pt-1.5 border-t border-slate-100 flex items-center justify-between text-[10px] font-bold text-slate-400">
+                              <span>Capacity: {grp.orders.length}/{grp.capacity}</span>
+                              <span
+                                className={
+                                  grp.status === 'READY'
+                                    ? 'text-emerald-600 font-extrabold'
+                                    : grp.status === 'PREPARING'
+                                    ? 'text-blue-600 font-extrabold'
+                                    : 'text-amber-600 font-extrabold'
+                                }
+                              >
+                                {grp.status === 'READY' ? 'Ready' : grp.status === 'PREPARING' ? 'Preparing' : 'Pending'}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Notice for Previous Date on Pending / In Preparation */}
+                {!isPrepDateToday && (prepTab === 'PENDING' || prepTab === 'PREPARING') && (
+                  <div className="bg-white/80 backdrop-blur-md rounded-3xl p-10 text-center border border-slate-200/80 shadow-soft">
+                    <div className="w-14 h-14 rounded-2xl bg-amber-50 text-amber-500 flex items-center justify-center mx-auto mb-3">
+                      <Clock className="w-7 h-7" />
+                    </div>
+                    <h3 className="text-base font-extrabold text-[#073653]">
+                      No active preparation tickets from previous dates.
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                      Pending and in-preparation tickets only reflect real-time active kitchen tasks. You can view completed and ready orders for historical dates under &quot;Ready&quot; or &quot;All Batches&quot;.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setPrepTab('READY')}
+                      className="mt-4 px-4 py-2 bg-[#00B894] text-white text-xs font-bold rounded-xl shadow-soft hover:bg-[#009e7f] transition cursor-pointer"
+                    >
+                      View Ready & Historical Orders
+                    </button>
+                  </div>
+                )}
+
+                {/* Loading Historical Data */}
+                {isLoadingHistorical && (
+                  <div className="bg-white/80 rounded-3xl p-12 text-center border border-slate-200/80 shadow-soft">
+                    <Loader2 className="w-8 h-8 text-[#00B894] animate-spin mx-auto mb-3" />
+                    <p className="text-xs font-bold text-[#073653]">Loading historical preparation batches...</p>
+                  </div>
+                )}
+
+                {/* Empty State when no batches in current tab */}
+                {!isLoadingHistorical &&
+                  prepBatchGroups.length === 0 &&
+                  !(!isPrepDateToday && (prepTab === 'PENDING' || prepTab === 'PREPARING')) && (
+                    <div className="bg-white/80 backdrop-blur-md rounded-3xl p-12 text-center border border-slate-200 shadow-sm">
+                      <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center text-slate-400 mx-auto mb-3">
+                        <ChefHat className="w-8 h-8 text-[#00B894]" />
+                      </div>
+                      <h3 className="text-sm font-extrabold text-[#073653]">No orders in this preparation view.</h3>
+                      <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                        {prepTab === 'PENDING'
+                          ? 'Orders confirmed by customers will appear here ready to begin preparation.'
+                          : prepTab === 'PREPARING'
+                          ? 'Orders currently being prepared in the kitchen will show up here.'
+                          : prepTab === 'READY'
+                          ? 'Orders that are ready for customer pickup with verification codes will appear here.'
+                          : 'Orders for this date will be grouped into 15-minute preparation containers.'}
+                      </p>
+                    </div>
+                  )}
+
+                {/* Batch Groups Accordions */}
+                {!isLoadingHistorical && prepBatchGroups.length > 0 && (
+                  <div className="space-y-5">
+                    {prepBatchGroups.map((grp, idx) => {
+                      const isExpanded = isPrepBatchExpanded(grp.batchKey);
+                      const batchColors = [
+                        'bg-[#F59E0B] text-white',
+                        'bg-[#3B82F6] text-white',
+                        'bg-[#10B981] text-white',
+                        'bg-[#EF4444] text-white',
+                        'bg-[#64748B] text-white',
+                      ];
+                      const colorClass = batchColors[idx % batchColors.length];
+                      const isBatchStarting = actionLoading[grp.batchKey] === 'STARTING';
+                      const isBatchMarkingReady = actionLoading[grp.batchKey] === 'MARKING_BATCH_READY';
+
+                      const aggregateString = Object.entries(grp.aggregateItems)
+                        .map(([itemName, qty]) => `${itemName} (${qty})`)
+                        .join('    ');
 
                       return (
                         <div
-                          key={batch.id}
-                          className="bg-surface rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden"
+                          key={grp.batchKey}
+                          className={`bg-white/90 backdrop-blur-md rounded-3xl border transition-all duration-200 overflow-hidden shadow-soft ${
+                            selectedCarouselBatchId === grp.batchKey
+                              ? 'border-2 border-[#00B894] ring-2 ring-[#00B894]/20'
+                              : 'border-slate-200/90 hover:border-slate-300'
+                          }`}
                         >
-                          <div className="p-5 bg-gradient-to-r from-slate-50 to-white border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                            <div className="flex items-center gap-3">
-                              <div className="w-12 h-12 rounded-2xl bg-amber-500 text-white flex items-center justify-center font-bold shadow-soft">
-                                <Flame className="w-6 h-6" />
-                              </div>
-                              <div>
-                                <h3 className="text-sm font-black text-text-primary">{batch.displayLabel}</h3>
-                                <p className="text-xs text-text-secondary mt-0.5">
-                                  {orders.length} committed order{orders.length !== 1 ? 's' : ''} in production
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => handleStartBatchPrep(batch.id)}
-                                disabled={isBatchStarting || isBatchMarkingReady}
-                                className="px-4 py-2.5 rounded-xl bg-primary-blue hover:bg-blue-600 text-white text-xs font-extrabold shadow-soft transition flex items-center gap-1.5 min-h-[44px] disabled:opacity-50"
+                          {/* Batch Header Bar */}
+                          <div className="p-4 sm:p-5 flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-gradient-to-r from-slate-50/50 to-white">
+                            {/* Left: Clock Icon, Time Slot & Orders Count, Aggregate Item Preview */}
+                            <div className="flex items-center gap-3.5 min-w-0">
+                              <div
+                                className={`w-11 h-11 rounded-2xl ${colorClass} flex items-center justify-center font-bold shadow-soft shrink-0`}
                               >
-                                {isBatchStarting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                                <span>Start All</span>
-                              </button>
-                              <button
-                                onClick={() => handleMarkBatchReady(batch.id)}
-                                disabled={isBatchStarting || isBatchMarkingReady}
-                                className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold shadow-soft transition flex items-center gap-1.5 min-h-[44px] disabled:opacity-50"
-                              >
-                                {isBatchMarkingReady && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                                <span>Mark Batch Ready</span>
-                              </button>
-                            </div>
-                          </div>
-
-                          <div className="p-5">
-                            <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-3">
-                              Aggregated Prep Quantities:
-                            </h4>
-                            <div className="flex flex-wrap gap-2 mb-5">
-                              {Object.entries(itemsTally).map(([itemName, qty]) => (
-                                <div
-                                  key={itemName}
-                                  className="px-3 py-1.5 bg-amber-50 rounded-xl border border-amber-200/70 text-xs font-black text-amber-900 flex items-center gap-2"
-                                >
-                                  <span className="w-5 h-5 rounded-lg bg-amber-200 flex items-center justify-center text-[10px]">
-                                    {qty}
+                                <Clock className="w-5 h-5" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="text-sm font-black text-[#073653] tracking-tight">
+                                    {grp.batchLabel}
                                   </span>
-                                  <span>{itemName}</span>
+                                  <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                                    {grp.orders.length} Order{grp.orders.length !== 1 ? 's' : ''}
+                                  </span>
                                 </div>
-                              ))}
+                                {aggregateString && (
+                                  <p className="text-xs font-semibold text-slate-500 mt-1 truncate max-w-xl">
+                                    {aggregateString}
+                                  </p>
+                                )}
+                              </div>
                             </div>
 
-                            <h4 className="text-xs font-black text-slate-500 uppercase tracking-wider mb-3">
-                              Order Tickets in this Batch:
-                            </h4>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                              {orders.map(ord => (
-                                <div
-                                  key={ord.id}
-                                  className="p-3.5 bg-slate-50/70 rounded-2xl border border-slate-200/70 flex flex-col justify-between"
-                                >
-                                  <div>
-                                    <div className="flex justify-between items-center text-xs">
-                                      <span className="font-mono font-black text-slate-700">#{ord.orderNumber}</span>
-                                      <span className="text-[11px] font-bold text-primary-blue">
-                                        {format12Time(ord.exactPickupTime)}
-                                      </span>
-                                    </div>
-                                    <h5 className="text-xs font-bold text-text-primary mt-1">{ord.customerName}</h5>
-                                    <div className="mt-2 space-y-0.5 text-xs text-slate-600">
-                                      {ord.items.map((it, idx) => (
-                                        <div key={idx}>{it.quantity}× {it.itemName}</div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                  <div className="mt-3 pt-2 border-t border-slate-200 flex justify-between items-center">
-                                    <span className="text-xs font-black text-deep-blue">₹{parseFloat(ord.totalAmount).toFixed(2)}</span>
-                                    <button
-                                      onClick={() => handleMarkOrderReady(ord.id)}
-                                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-[11px] font-bold min-h-[36px]"
-                                    >
-                                      Mark Ready
-                                    </button>
-                                  </div>
+                            {/* Right: Capacity Badge, Status Pill, Batch Actions, View All & Chevron */}
+                            <div className="flex items-center flex-wrap gap-2.5 self-end lg:self-auto shrink-0">
+                              <div className="px-3 py-1 rounded-xl bg-[#E6F9F4] text-[#00B894] font-black text-xs border border-[#00B894]/20">
+                                Capacity: {grp.orders.length}/{grp.capacity}
+                              </div>
+
+                              {grp.pendingCount > 0 && (
+                                <div className="px-3 py-1 rounded-xl bg-amber-50 text-amber-700 font-black text-xs border border-amber-200">
+                                  {grp.pendingCount} Pending
                                 </div>
-                              ))}
+                              )}
+                              {grp.preparingCount > 0 && (
+                                <div className="px-3 py-1 rounded-xl bg-blue-50 text-blue-700 font-black text-xs border border-blue-200">
+                                  {grp.preparingCount} In Prep
+                                </div>
+                              )}
+                              {grp.readyCount > 0 && (
+                                <div className="px-3 py-1 rounded-xl bg-emerald-50 text-emerald-700 font-black text-xs border border-emerald-200">
+                                  {grp.readyCount} Ready
+                                </div>
+                              )}
+
+                              {/* Batch level actions */}
+                              {grp.pendingCount > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartBatchPrep(grp.batchKey)}
+                                  disabled={isBatchStarting || isBatchMarkingReady}
+                                  className="px-3.5 py-2 rounded-xl bg-[#00B894] hover:bg-[#009e7f] text-white text-xs font-bold shadow-soft transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                                >
+                                  {isBatchStarting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                                  <span>Start All</span>
+                                </button>
+                              )}
+
+                              {grp.preparingCount > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleMarkBatchReady(grp.batchKey)}
+                                  disabled={isBatchStarting || isBatchMarkingReady}
+                                  className="px-3.5 py-2 rounded-xl bg-[#10B981] hover:bg-emerald-700 text-white text-xs font-bold shadow-soft transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                                >
+                                  {isBatchMarkingReady && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                                  <span>Mark Batch Ready</span>
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() => togglePrepBatchAccordion(grp.batchKey)}
+                                className="px-3 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-[#073653] text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                              >
+                                <span>{isExpanded ? 'Collapse' : 'View All'}</span>
+                                {isExpanded ? (
+                                  <ChevronUp className="w-3.5 h-3.5 text-slate-500" />
+                                ) : (
+                                  <ChevronDown className="w-3.5 h-3.5 text-slate-500" />
+                                )}
+                              </button>
                             </div>
                           </div>
+
+                          {/* Expanded Batch Content */}
+                          {isExpanded && (
+                            <div className="border-t border-slate-100">
+                              {/* Aggregated prep quantities bar */}
+                              <div className="p-4 sm:p-5 bg-slate-50/60 border-b border-slate-100">
+                                <h4 className="text-[11px] font-black uppercase tracking-wider text-slate-400 mb-2.5 flex items-center gap-1.5">
+                                  <Utensils className="w-3.5 h-3.5 text-slate-400" />
+                                  Aggregated Items in this Batch:
+                                </h4>
+                                <div className="flex flex-wrap gap-2">
+                                  {Object.entries(grp.aggregateItems).map(([itemName, qty]) => (
+                                    <div
+                                      key={itemName}
+                                      className="px-3 py-1.5 bg-white rounded-xl border border-slate-200/80 text-xs font-black text-[#073653] flex items-center gap-2 shadow-2xs"
+                                    >
+                                      <span className="w-5 h-5 rounded-lg bg-[#E6F9F4] text-[#00B894] flex items-center justify-center text-[11px] font-black">
+                                        {qty}
+                                      </span>
+                                      <span>{itemName}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* Cards or List Representation */}
+                              {prepViewMode === 'CARD' ? (
+                                <div className="p-4 sm:p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                  {grp.orders.map((ord) => {
+                                    const isPrepStarting = actionLoading[ord.id] === 'STARTING_PREP';
+                                    const isOrderMarkingReady = actionLoading[ord.id] === 'MARKING_READY';
+                                    const isOrderCollecting = actionLoading[ord.id] === 'VERIFYING';
+
+                                    return (
+                                      <div
+                                        key={ord.id}
+                                        className="p-4 bg-white rounded-2xl border border-slate-200/80 shadow-soft hover:shadow-md transition-all flex flex-col justify-between"
+                                      >
+                                        <div>
+                                          {/* Top Header of Card */}
+                                          <div className="flex justify-between items-center text-xs pb-2 border-b border-slate-100">
+                                            <span className="font-mono font-black text-sm text-[#073653] tracking-wide">
+                                              #{ord.orderNumber}
+                                            </span>
+                                            <div className="flex items-center gap-1 text-[11px] font-bold text-[#00B894] bg-[#E6F9F4] px-2 py-0.5 rounded-full">
+                                              <Clock className="w-3 h-3" />
+                                              <span>{format12Time(ord.exactPickupTime)}</span>
+                                            </div>
+                                          </div>
+
+                                          {/* Customer Name */}
+                                          <h5 className="text-xs font-bold text-[#073653] mt-2 truncate">
+                                            {ord.customerName}
+                                          </h5>
+
+                                          {/* Clean Text Items (NO FOOD IMAGES) */}
+                                          <div className="mt-2.5 space-y-1 bg-slate-50/70 p-2.5 rounded-xl border border-slate-100 text-xs">
+                                            {ord.items.map((it, i) => (
+                                              <div key={i} className="flex justify-between items-center text-slate-700">
+                                                <span className="font-medium truncate pr-2">{it.itemName}</span>
+                                                <span className="font-black text-[#073653] shrink-0">×{it.quantity}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+
+                                          {/* Ready Tab: Prominent 4-digit pickup code */}
+                                          {['READY', 'READY_FOR_PICKUP'].includes(ord.status) && (
+                                            <div className="my-3 p-2.5 bg-[#E6F9F4] rounded-xl border border-[#00B894]/30 flex flex-col items-center justify-center">
+                                              <span className="text-[10px] font-black uppercase tracking-wider text-[#00B894]">
+                                                Pickup Verification Code
+                                              </span>
+                                              <span className="font-mono text-2xl font-black text-[#073653] tracking-widest mt-0.5">
+                                                {ord.pickupCode || '••••'}
+                                              </span>
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        {/* Bottom: Price + Action Button */}
+                                        <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                                          <span className="text-sm font-black text-[#073653]">
+                                            ₹{parseFloat(ord.totalAmount).toFixed(2)}
+                                          </span>
+
+                                          {ord.status === 'CONFIRMED' && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleStartOrderPrep(ord.id)}
+                                              disabled={isPrepStarting}
+                                              className="px-3 py-1.5 bg-[#00B894] hover:bg-[#009e7f] text-white text-xs font-bold rounded-xl shadow-soft transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer min-h-[36px]"
+                                            >
+                                              {isPrepStarting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                                              <span>Mark in Preparation</span>
+                                            </button>
+                                          )}
+
+                                          {ord.status === 'PREPARING' && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleMarkOrderReady(ord.id)}
+                                              disabled={isOrderMarkingReady}
+                                              className="px-3 py-1.5 bg-[#10B981] hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-soft transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer min-h-[36px]"
+                                            >
+                                              {isOrderMarkingReady && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                                              <span>Mark Ready</span>
+                                            </button>
+                                          )}
+
+                                          {['READY', 'READY_FOR_PICKUP'].includes(ord.status) && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleCollectReadyOrder(ord)}
+                                              disabled={isOrderCollecting}
+                                              className="px-3 py-1.5 bg-[#00B894] hover:bg-[#009e7f] text-white text-xs font-bold rounded-xl shadow-soft transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer min-h-[36px]"
+                                            >
+                                              {isOrderCollecting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                                              <span>Mark as Collected</span>
+                                            </button>
+                                          )}
+
+                                          {ord.status === 'COLLECTED' && (
+                                            <span className="px-2.5 py-1 bg-slate-100 text-slate-600 rounded-lg text-xs font-bold flex items-center gap-1">
+                                              <Check className="w-3.5 h-3.5 text-emerald-600" />
+                                              <span>Collected</span>
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                /* List View */
+                                <div className="p-4 sm:p-5 overflow-x-auto">
+                                  <table className="w-full text-left text-xs">
+                                    <thead>
+                                      <tr className="border-b border-slate-200 text-slate-400 uppercase text-[10px] font-black tracking-wider">
+                                        <th className="py-2.5 px-3">Order #</th>
+                                        <th className="py-2.5 px-3">Customer</th>
+                                        <th className="py-2.5 px-3">Items & Qty</th>
+                                        <th className="py-2.5 px-3">Pickup Time</th>
+                                        <th className="py-2.5 px-3">Total</th>
+                                        {prepTab === 'READY' && <th className="py-2.5 px-3 text-center">Pickup Code</th>}
+                                        <th className="py-2.5 px-3 text-right">Action</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                      {grp.orders.map((ord) => (
+                                        <tr key={ord.id} className="hover:bg-slate-50/60 transition">
+                                          <td className="py-3 px-3 font-mono font-black text-[#073653]">
+                                            #{ord.orderNumber}
+                                          </td>
+                                          <td className="py-3 px-3 font-bold text-[#073653]">
+                                            {ord.customerName}
+                                          </td>
+                                          <td className="py-3 px-3 text-slate-600">
+                                            {ord.items.map(it => `${it.quantity}× ${it.itemName}`).join(', ')}
+                                          </td>
+                                          <td className="py-3 px-3 font-bold text-[#00B894]">
+                                            {format12Time(ord.exactPickupTime)}
+                                          </td>
+                                          <td className="py-3 px-3 font-black text-[#073653]">
+                                            ₹{parseFloat(ord.totalAmount).toFixed(2)}
+                                          </td>
+                                          {prepTab === 'READY' && (
+                                            <td className="py-3 px-3 text-center">
+                                              <span className="font-mono font-black text-sm px-2.5 py-1 rounded-lg bg-[#E6F9F4] text-[#073653] tracking-widest border border-[#00B894]/30">
+                                                {ord.pickupCode || '••••'}
+                                              </span>
+                                            </td>
+                                          )}
+                                          <td className="py-3 px-3 text-right">
+                                            {ord.status === 'CONFIRMED' && (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleStartOrderPrep(ord.id)}
+                                                className="px-3 py-1.5 bg-[#00B894] hover:bg-[#009e7f] text-white text-xs font-bold rounded-lg shadow-soft transition cursor-pointer"
+                                              >
+                                                Mark in Preparation
+                                              </button>
+                                            )}
+                                            {ord.status === 'PREPARING' && (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleMarkOrderReady(ord.id)}
+                                                className="px-3 py-1.5 bg-[#10B981] hover:bg-emerald-700 text-white text-xs font-bold rounded-lg shadow-soft transition cursor-pointer"
+                                              >
+                                                Mark Ready
+                                              </button>
+                                            )}
+                                            {['READY', 'READY_FOR_PICKUP'].includes(ord.status) && (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleCollectReadyOrder(ord)}
+                                                className="px-3 py-1.5 bg-[#00B894] hover:bg-[#009e7f] text-white text-xs font-bold rounded-lg shadow-soft transition cursor-pointer"
+                                              >
+                                                Mark as Collected
+                                              </button>
+                                            )}
+                                            {ord.status === 'COLLECTED' && (
+                                              <span className="text-xs font-bold text-slate-500">
+                                                Collected
+                                              </span>
+                                            )}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       );
                     })}
