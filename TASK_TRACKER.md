@@ -241,3 +241,69 @@ This audit was conducted before starting Prompt 1 to protect existing work and p
 - `src/lib/services/order-service.ts`: Enabled Tomorrow pre-orders after closing hours, updated sequence numbering with canonical date, and enhanced `autoExpireUncollectedOrders` to distinguish between "NOT_COLLECTED_AFTER_2_HOURS" (paid) and "NO_PAYMENT_AFTER_2_HOURS" (unpaid).
 - `src/components/CustomerPortal.tsx`: Integrated cart `localStorage` persistence, initial "+ Add" replacing with stepper, Day toggle (`Today` vs `Tomorrow`), 2-hour grace period separation, distinct "Not Collected" vs "No Payment" badges, Hindi search placeholder "आज क्या खाएं?", left inside search icon (`pl-9`), and seller-uploaded image preservation.
 - `scripts/test-prompt2-features.ts`: Created automated test suite covering all Prompt 2 requirements.
+
+---
+
+## Prompt 3 — Seller Menu Management & Customer Menu Sync
+**Date**: October 20-21, 2026  
+**Scope**: Category creation and safe deletion (blocking deletion when items exist), dedicated image upload modal on menu item image `+` icon (device upload + URL paste without opening edit form), displaying seller-added descriptions on customer item selection only, sorting seller menu by stock availability with visual divider, customer search box inside icon and Hindi placeholder alignment, and immediate seller-to-customer menu synchronization.
+
+### Checklist of Requirements
+
+#### 1. Category Management — Seller Menu Management
+- `[x]` 1. Add options to the existing Category dropdown to create a new category and delete an existing category.
+- `[x]` 2. Show existing categories for selection when deleting.
+- `[x]` 3. Prevent accidental deletion where a category is still in use; explain the issue clearly and preserve its menu items.
+- `[x]` 4. Preserve existing category assignments and menu data.
+- `[x]` 5. Support category deletion API (`DELETE /api/menu/categories`) with foreign key verification and audit logging.
+
+#### 2. Image Upload Button
+- `[x]` 6. Small `+` icon on each seller menu-item image opens ONLY image-upload options (Device Upload & URL Paste).
+- `[x]` 7. Prevent `+` icon from opening menu-item Edit form or triggering any unrelated actions.
+- `[x]` 8. Show upload progress, loading state, and clear success or error message.
+- `[x]` 9. Preserve image quality with 600x600 WebP canvas compression and existing image-storage approach.
+- `[x]` 10. No database schema changes or new storage services introduced.
+
+#### 3. Show Seller-Added Descriptions to Customers
+- `[x]` 11. Display seller-added description on customer interface ONLY when customer opens or selects that item.
+- `[x]` 12. Do NOT add descriptions permanently to every menu card on main menu.
+- `[x]` 13. Use actual description associated with selected menu item without inventing descriptions or modifying unrelated details.
+
+#### 4. Sort Menu Items by Stock Availability
+- `[x]` 14. On seller's Menu Management page, show all in-stock items first, followed by all out-of-stock items.
+- `[x]` 15. Add subtle horizontal divider or shadow between in-stock and out-of-stock groups.
+- `[x]` 16. Update item position automatically when seller changes availability toggle.
+- `[x]` 17. Preserve category filters, search, editing, archiving, and stock-toggle behaviour.
+
+#### 5. Customer Search Box
+- `[x]` 18. Add small, faded search icon inside extreme-left side of existing search box.
+- `[x]` 19. Show Hindi placeholder “आज क्या खाएं?” immediately after icon.
+- `[x]` 20. Keep existing search functionality, theme, colours, dimensions, and alignment.
+- `[x]` 21. Strictly ensure icon remains inside input without overlapping text.
+
+#### 6. Immediate Seller-to-Customer Menu Updates
+- `[x]` 22. Seller changes to menu images, availability, descriptions, and categories appear on customer interface without full-page refresh.
+- `[x]` 23. Implement multi-tier sync: instant `BroadcastChannel` cross-tab sync, window focus / visibilitychange sync, and 5-second polling.
+- `[x]` 24. When an item becomes unavailable, promptly remove it from customer's available menu; restore when available.
+- `[x]` 25. Avoid duplicate requests, unnecessary polling, and slow page updates.
+- `[x]` 26. Show visible loading indicator while images/menu are uploading or refreshing, with clear error feedback.
+- `[x]` 27. Verified synchronisation with automated and manual testing evidence.
+
+#### 7. Verification & Deployment
+- `[x]` 28. Automated Prompt 3 test suite (`npx tsx scripts/test-prompt3-features.ts`): Passed.
+- `[x]` 29. Run existing test suites (`test:hours`: 28 Passed; `test:suite`: 16 Passed; `test-prompt2-features`: Passed).
+- `[x]` 30. Next.js production build (`npm run build`): Completed with 0 errors.
+- `[x]` 31. Inspect git diff to verify strict minimal changes.
+- `[x]` 32. Commit and push to GitHub `main` and verify live Vercel deployment.
+
+---
+
+### Prompt 3 — Files Changed & Verification Evidence
+
+| File Path | Description of Changes |
+| :--- | :--- |
+| `src/app/api/menu/categories/route.ts` | Added `DELETE` endpoint with foreign key in-use checking (blocks deletion if any items are assigned to category with detailed item count & names explanation), canteen authorization, and audit log generation (`CATEGORY_DELETED`). |
+| `src/components/SellerPortal.tsx` | Replaced Category button with dropdown menu ("+ Create New Category" and "Delete Existing Category"); added Delete Category modal with in-use safety blocker & explanatory banner; decoupled image `+` icon from Edit modal to open dedicated Single Item Image Upload modal (Device file canvas WebP 600x600 compression & Image URL paste with preview); sorted seller menu items with in-stock first, subtle gradient divider with shadow, followed by out-of-stock items; added instant cross-tab notification trigger (`notifyMenuUpdate`). |
+| `src/components/CustomerPortal.tsx` | Updated search box with faded search icon (`w-3.5 h-3.5 text-slate-400/80`) inside extreme-left (`left-3`, `pl-8`) followed immediately by Hindi placeholder "आज क्या खाएं?"; added real-time sync listeners (`BroadcastChannel`, `storage`, `focus`, `visibilitychange`, and 5s polling); excluded unavailable/archived items promptly from customer's available menu; added syncing indicator and error banner; added click-to-open item detail modal displaying seller-added description ONLY on item selection while preserving card compactness without permanent descriptions. |
+| `scripts/test-prompt3-features.ts` | Automated end-to-end verification script testing category deletion in-use protection, stock sorting logic, customer availability filtering, Hindi search matching, seller description isolation, and dedicated image upload isolation. |
+| `TASK_TRACKER.md` | Preserved all historical task documentation and recorded Prompt 3 execution details and verification logs. |

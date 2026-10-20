@@ -144,6 +144,20 @@ const ITEM_IMAGE_MAP: Record<string, string> = {
   'Masala Dosa': 'https://images.unsplash.com/photo-1668236543090-82eba5ee5976?auto=format&fit=crop&w=400&q=80',
 };
 
+// Cross-tab and customer menu synchronization notification helper
+export const notifyMenuUpdate = () => {
+  if (typeof window !== 'undefined') {
+    try {
+      const channel = new BroadcastChannel('qless_menu_channel');
+      channel.postMessage({ type: 'MENU_UPDATED', timestamp: Date.now() });
+      channel.close();
+    } catch {}
+    try {
+      localStorage.setItem('qless_menu_sync_timestamp', Date.now().toString());
+    } catch {}
+  }
+};
+
 const CANTEEN_THUMBNAIL_URL = 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=160&q=80';
 
 interface SellerPortalProps {
@@ -265,7 +279,22 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddItemOpen, setIsAddItemOpen] = useState(false);
   const [isAddCategoryOpen, setIsAddCategoryOpen] = useState(false);
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
+  const [isDeleteCategoryOpen, setIsDeleteCategoryOpen] = useState(false);
+  const [deleteCategorySelectedId, setDeleteCategorySelectedId] = useState('');
+  const [deleteCategoryLoading, setDeleteCategoryLoading] = useState(false);
+  const [deleteCategoryError, setDeleteCategoryError] = useState<string | null>(null);
   const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
+
+  // Dedicated Image Upload for Single Item (+ Icon on Image)
+  const [imageUploadItem, setImageUploadItem] = useState<MenuItem | null>(null);
+  const [imageUploadMode, setImageUploadMode] = useState<'UPLOAD' | 'URL'>('UPLOAD');
+  const [imageUploadPreview, setImageUploadPreview] = useState<string>('');
+  const [imageUploadUrl, setImageUploadUrl] = useState<string>('');
+  const [singleItemImageLoading, setSingleItemImageLoading] = useState(false);
+  const [imageUploadSaving, setImageUploadSaving] = useState(false);
+  const [imageUploadError, setImageUploadError] = useState<string | null>(null);
+  const [imageUploadSuccess, setImageUploadSuccess] = useState<string | null>(null);
 
   // Archive & Restore Confirmation Modals
   const [confirmArchiveItem, setConfirmArchiveItem] = useState<MenuItem | null>(null);
@@ -284,6 +313,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
   const notificationsDropdownRef = React.useRef<HTMLDivElement>(null);
   const canteenDropdownRef = React.useRef<HTMLDivElement>(null);
   const prepDatePickerRef = React.useRef<HTMLDivElement>(null);
+  const categoryDropdownRef = React.useRef<HTMLDivElement>(null);
 
   // Horizontal Category Scroll Ref
   const categoryScrollRef = React.useRef<HTMLDivElement>(null);
@@ -515,6 +545,9 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       if (showPrepDatePicker && prepDatePickerRef.current && !prepDatePickerRef.current.contains(target)) {
         setShowPrepDatePicker(false);
       }
+      if (showCategoryDropdown && categoryDropdownRef.current && !categoryDropdownRef.current.contains(target)) {
+        setShowCategoryDropdown(false);
+      }
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -524,6 +557,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
         setShowNotifications(false);
         setShowCanteenDropdown(false);
         setShowPrepDatePicker(false);
+        setShowCategoryDropdown(false);
       }
     };
 
@@ -533,7 +567,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [showStatusDropdown, showProfileDropdown, showNotifications, showCanteenDropdown, showPrepDatePicker]);
+  }, [showStatusDropdown, showProfileDropdown, showNotifications, showCanteenDropdown, showPrepDatePicker, showCategoryDropdown]);
 
   // Fetch historical orders when seller inspects a previous date on PREPARATION tab
   useEffect(() => {
@@ -901,6 +935,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
         body: JSON.stringify({ itemId, isAvailable: !currentVal }),
       });
       if (!res.ok) throw new Error('Failed to update availability.');
+      notifyMenuUpdate();
     } catch (err: any) {
       setPortalError(err.message);
       await refreshData(false);
@@ -927,6 +962,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
         body: JSON.stringify({ itemId, isTodaysMenu: !currentVal }),
       });
       if (!res.ok) throw new Error('Failed to update Today\'s Menu status.');
+      notifyMenuUpdate();
     } catch (err: any) {
       setPortalError(err.message);
       await refreshData(false);
@@ -1010,6 +1046,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       setEditingItem(null);
       resetItemForm();
       await refreshData(false);
+      notifyMenuUpdate();
     } catch (err: any) {
       setPortalError(err.message);
     } finally {
@@ -1130,6 +1167,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       setPortalSuccess(`Item "${itemName}" archived successfully.`);
       setConfirmArchiveItem(null);
       await refreshData(false);
+      notifyMenuUpdate();
     } catch (err: any) {
       setPortalError(err.message);
       await refreshData(false);
@@ -1163,6 +1201,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       setPortalSuccess(`Item "${itemName}" restored to active menu.`);
       setConfirmRestoreItem(null);
       await refreshData(false);
+      notifyMenuUpdate();
     } catch (err: any) {
       setPortalError(err.message);
       await refreshData(false);
@@ -1193,6 +1232,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       setNewCatName('');
       setIsAddCategoryOpen(false);
       await refreshData(false);
+      notifyMenuUpdate();
     } catch (err: any) {
       setPortalError(err.message);
     } finally {
@@ -1201,6 +1241,160 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
         delete copy.NEW_CAT;
         return copy;
       });
+    }
+  };
+
+  // Category Deletion Handler with accidental-deletion prevention (Requirement 1)
+  const handleDeleteCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!deleteCategorySelectedId) {
+      setDeleteCategoryError('Please select a category to delete.');
+      return;
+    }
+
+    const catToDelete = categories.find(c => c.id === deleteCategorySelectedId);
+    if (!catToDelete) return;
+
+    // Check frontend usage first as immediate feedback
+    const itemsUsing = menuItems.filter(m => m.categoryId === deleteCategorySelectedId);
+    if (itemsUsing.length > 0) {
+      setDeleteCategoryError(
+        `Cannot delete category "${catToDelete.name}" because it is currently assigned to ${itemsUsing.length} menu item(s). Please reassign or delete these items first.`
+      );
+      return;
+    }
+
+    setDeleteCategoryLoading(true);
+    setDeleteCategoryError(null);
+
+    try {
+      const res = await fetch(`/api/menu/categories?id=${deleteCategorySelectedId}`, {
+        method: 'DELETE',
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to delete category.');
+      }
+      setPortalSuccess(`Category "${catToDelete.name}" deleted successfully.`);
+      setIsDeleteCategoryOpen(false);
+      setDeleteCategorySelectedId('');
+      await refreshData(false);
+      notifyMenuUpdate();
+    } catch (err: any) {
+      setDeleteCategoryError(err.message);
+    } finally {
+      setDeleteCategoryLoading(false);
+    }
+  };
+
+  // Dedicated Image Upload Handlers for single item (+ Icon on image) (Requirement 2)
+  const openImageUploadModal = (item: MenuItem) => {
+    setImageUploadItem(item);
+    setImageUploadMode('UPLOAD');
+    setImageUploadPreview(item.imageUrl || '');
+    setImageUploadUrl(item.imageUrl && !item.imageUrl.startsWith('data:') ? item.imageUrl : '');
+    setSingleItemImageLoading(false);
+    setImageUploadSaving(false);
+    setImageUploadError(null);
+    setImageUploadSuccess(null);
+  };
+
+  const handleDeviceImageSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImageUploadError(null);
+    setImageUploadSuccess(null);
+
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setImageUploadError('Unsupported format. Please select a JPG, PNG, or WebP image.');
+      return;
+    }
+
+    if (file.size > 2.5 * 1024 * 1024) {
+      setImageUploadError('File size exceeds 2.5MB. Please choose a smaller image.');
+      return;
+    }
+
+    setSingleItemImageLoading(true);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string;
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 600;
+          canvas.height = 600;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, 600, 600);
+            const ratio = Math.min(600 / img.width, 600 / img.height);
+            const w = img.width * ratio;
+            const h = img.height * ratio;
+            const x = (600 - w) / 2;
+            const y = (600 - h) / 2;
+            ctx.drawImage(img, x, y, w, h);
+            const optimized = canvas.toDataURL('image/webp', 0.9);
+            setImageUploadPreview(optimized);
+          } else {
+            setImageUploadPreview(dataUrl);
+          }
+        } catch {
+          setImageUploadPreview(dataUrl);
+        } finally {
+          setSingleItemImageLoading(false);
+        }
+      };
+      img.onerror = () => {
+        setImageUploadError('Failed to load image for processing.');
+        setSingleItemImageLoading(false);
+      };
+      img.src = dataUrl;
+    };
+    reader.onerror = () => {
+      setImageUploadError('Failed to read file from your device.');
+      setSingleItemImageLoading(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveItemImage = async (newImageUrl: string | null) => {
+    if (!imageUploadItem) return;
+    setImageUploadSaving(true);
+    setImageUploadError(null);
+    setImageUploadSuccess(null);
+
+    try {
+      const res = await fetch('/api/menu', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          itemId: imageUploadItem.id,
+          imageUrl: newImageUrl || null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update item image.');
+
+      // Optimistically update local menu items
+      setMenuItems(prev =>
+        prev.map(m => (m.id === imageUploadItem.id ? { ...m, imageUrl: newImageUrl || null } : m))
+      );
+      const successText = newImageUrl
+        ? `Updated image for "${imageUploadItem.name}" successfully.`
+        : `Removed custom image for "${imageUploadItem.name}".`;
+      setImageUploadSuccess(successText);
+      setPortalSuccess(`Updated image for "${imageUploadItem.name}".`);
+      await refreshData(false);
+      notifyMenuUpdate();
+      setTimeout(() => {
+        setImageUploadItem(null);
+      }, 700);
+    } catch (err: any) {
+      setImageUploadError(err.message);
+    } finally {
+      setImageUploadSaving(false);
     }
   };
 
@@ -1535,6 +1729,20 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
 
     return list;
   }, [activeMenuItems, todaysMenuItems, archivedMenuItems, menuFilterCategory, searchQuery]);
+
+  // Sort menu items by stock availability: in-stock items first, followed by all out-of-stock items (Requirement 4)
+  const { inStockMenuItems, outOfStockMenuItems } = useMemo(() => {
+    const inStock: MenuItem[] = [];
+    const outOfStock: MenuItem[] = [];
+    for (const item of filteredMenuItems) {
+      if (item.isAvailable) {
+        inStock.push(item);
+      } else {
+        outOfStock.push(item);
+      }
+    }
+    return { inStockMenuItems: inStock, outOfStockMenuItems: outOfStock };
+  }, [filteredMenuItems]);
 
   const format12Time = (isoString?: string | Date | null) => {
     return formatPickupTimeDisplay(isoString);
@@ -3570,15 +3778,50 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2.5">
-                    {/* Category Management Button */}
-                    <button
-                      onClick={() => setIsAddCategoryOpen(true)}
-                      className="px-3.5 py-2 bg-white/90 hover:bg-white text-[#073653] border border-[#BFEBDD] rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm min-h-[42px]"
-                    >
-                      <Plus className="w-3.5 h-3.5 text-[#00B894]" />
-                      <span>Category</span>
-                      <ChevronDown className="w-3 h-3 text-[#64839A]" />
-                    </button>
+                    {/* Category Management Dropdown (Requirement 1) */}
+                    <div className="relative" ref={categoryDropdownRef}>
+                      <button
+                        type="button"
+                        onClick={() => setShowCategoryDropdown(prev => !prev)}
+                        className="px-3.5 py-2 bg-white/90 hover:bg-white text-[#073653] border border-[#BFEBDD] rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm min-h-[42px] cursor-pointer"
+                        aria-expanded={showCategoryDropdown}
+                        aria-haspopup="true"
+                      >
+                        <Plus className="w-3.5 h-3.5 text-[#00B894]" />
+                        <span>Category</span>
+                        <ChevronDown className={`w-3 h-3 text-[#64839A] transition-transform ${showCategoryDropdown ? 'rotate-180' : ''}`} />
+                      </button>
+
+                      {showCategoryDropdown && (
+                        <div className="absolute right-0 mt-1.5 w-52 bg-white rounded-2xl shadow-xl border border-[#BFEBDD]/80 p-1.5 z-30 animate-in fade-in zoom-in-95 duration-100">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowCategoryDropdown(false);
+                              setIsAddCategoryOpen(true);
+                            }}
+                            className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-[#073653] hover:bg-[#DFF3E8]/60 hover:text-[#0B725C] transition flex items-center gap-2 cursor-pointer"
+                          >
+                            <Plus className="w-3.5 h-3.5 text-[#00B894]" />
+                            <span>Create New Category</span>
+                          </button>
+                          <div className="my-1 h-[1px] bg-slate-100" />
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowCategoryDropdown(false);
+                              setDeleteCategorySelectedId(categories[0]?.id || '');
+                              setDeleteCategoryError(null);
+                              setIsDeleteCategoryOpen(true);
+                            }}
+                            className="w-full text-left px-3 py-2 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 transition flex items-center gap-2 cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                            <span>Delete Existing Category</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
 
                     {/* Add Menu Item Button */}
                     <button
@@ -3724,158 +3967,183 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 items-stretch">
-                    {filteredMenuItems.map(item => {
-                      const isAvailUpdating = actionLoading[item.id] === 'UPDATING_AVAIL';
-                      const isTodayUpdating = actionLoading[item.id] === 'UPDATING_TODAY';
-                      const isArchiving = actionLoading[item.id] === 'ARCHIVING';
-                      const isRestoring = actionLoading[item.id] === 'RESTORING';
-                      const catName = categories.find(c => c.id === item.categoryId)?.name || 'General';
+                    {(() => {
+                      const renderCard = (item: MenuItem) => {
+                        const isAvailUpdating = actionLoading[item.id] === 'UPDATING_AVAIL';
+                        const isArchiving = actionLoading[item.id] === 'ARCHIVING';
+                        const isRestoring = actionLoading[item.id] === 'RESTORING';
+                        const catName = categories.find(c => c.id === item.categoryId)?.name || 'General';
 
-                      return (
-                        <div
-                          key={item.id}
-                          className={`bg-[#FFFDF9] rounded-[24px] p-4.5 sm:p-5 border border-[#F2ECE4] shadow-[0_4px_16px_rgba(7,54,83,0.04)] hover:shadow-[0_8px_24px_rgba(7,54,83,0.08)] transition-all duration-200 flex flex-col justify-between h-full ${
-                            item.isArchived
-                              ? 'opacity-80 border-slate-200 bg-slate-50/80'
-                              : !item.isAvailable
-                              ? 'opacity-90'
-                              : ''
-                          }`}
-                        >
-                          <div>
-                            {/* Card Top: Category Dot & Label + Price */}
-                            <div className="flex items-center justify-between gap-2 pb-2 h-6">
-                              <div className="flex items-center gap-1.5 overflow-hidden">
-                                <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${
-                                  item.isVegetarian ? 'bg-[#00B894]' : 'bg-rose-500'
-                                }`} />
-                                <span className="text-[11px] font-bold uppercase tracking-wider text-[#64839A] truncate">
-                                  {catName}
+                        return (
+                          <div
+                            key={item.id}
+                            className={`bg-[#FFFDF9] rounded-[24px] p-4.5 sm:p-5 border border-[#F2ECE4] shadow-[0_4px_16px_rgba(7,54,83,0.04)] hover:shadow-[0_8px_24px_rgba(7,54,83,0.08)] transition-all duration-200 flex flex-col justify-between h-full ${
+                              item.isArchived
+                                ? 'opacity-80 border-slate-200 bg-slate-50/80'
+                                : !item.isAvailable
+                                ? 'opacity-90 bg-[#FAF8F5]'
+                                : ''
+                            }`}
+                          >
+                            <div>
+                              {/* Card Top: Category Dot & Label + Price */}
+                              <div className="flex items-center justify-between gap-2 pb-2 h-6">
+                                <div className="flex items-center gap-1.5 overflow-hidden">
+                                  <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${
+                                    item.isVegetarian ? 'bg-[#00B894]' : 'bg-rose-500'
+                                  }`} />
+                                  <span className="text-[11px] font-bold uppercase tracking-wider text-[#64839A] truncate">
+                                    {catName}
+                                  </span>
+                                </div>
+                                <span className="font-extrabold text-[15px] tracking-tight text-[#0284C7] shrink-0">
+                                  {item.price !== null ? `₹${parseFloat(item.price).toFixed(2)}` : 'Price not fixed'}
                                 </span>
                               </div>
-                              <span className="font-extrabold text-[15px] tracking-tight text-[#0284C7] shrink-0">
-                                {item.price !== null ? `₹${parseFloat(item.price).toFixed(2)}` : 'Price not fixed'}
-                              </span>
-                            </div>
 
-                            {/* Card Body: Info on Left, Dish Photography on Right */}
-                            <div className="flex items-center justify-between gap-3 my-auto py-2">
-                              <div className="flex-1 min-w-0 pr-1 flex flex-col justify-between">
-                                <div>
-                                  <h3 className="text-[17px] font-black text-[#073653] leading-tight tracking-tight truncate" title={item.name}>
-                                    {item.name}
-                                  </h3>
-                                  <p className="text-xs text-[#8BA3B5] font-medium mt-1">
-                                    Daily Order Limit: {item.dailyCapacity || 50}
-                                  </p>
-                                </div>
+                              {/* Card Body: Info on Left, Dish Photography on Right */}
+                              <div className="flex items-center justify-between gap-3 my-auto py-2">
+                                <div className="flex-1 min-w-0 pr-1 flex flex-col justify-between">
+                                  <div>
+                                    <h3 className="text-[17px] font-black text-[#073653] leading-tight tracking-tight truncate" title={item.name}>
+                                      {item.name}
+                                    </h3>
+                                    <p className="text-xs text-[#8BA3B5] font-medium mt-1">
+                                      Daily Order Limit: {item.dailyCapacity || 50}
+                                    </p>
+                                  </div>
 
-                                {/* Stock Status & Toggle */}
-                                <div className="mt-3.5">
-                                  <span className={`text-xs font-bold block mb-1 ${
-                                    item.isAvailable ? 'text-[#073653]' : 'text-slate-400'
-                                  }`}>
-                                    {item.isAvailable ? 'In Stock' : 'Sold Out'}
-                                  </span>
-
-                                  <div className="flex flex-col items-start gap-1">
-                                    {/* Availability Toggle Switch */}
-                                    <button
-                                      type="button"
-                                      disabled={item.isArchived || isAvailUpdating || item.price === null}
-                                      onClick={() => handleToggleItemAvailability(item.id, item.isAvailable)}
-                                      className={`w-11 h-6 rounded-full transition-colors flex items-center p-0.5 cursor-pointer disabled:cursor-not-allowed ${
-                                        item.isAvailable ? 'bg-[#00B894] justify-end' : 'bg-slate-300 justify-start'
-                                      }`}
-                                      aria-label={`Toggle availability for ${item.name}`}
-                                    >
-                                      <span className="w-5 h-5 rounded-full bg-white shadow-sm block transition-transform" />
-                                    </button>
-
-                                    {/* Active Badge */}
-                                    <span
-                                      className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
-                                        item.isAvailable
-                                          ? 'bg-[#DFF7F2] text-[#009E7E]'
-                                          : 'bg-slate-100 text-slate-400'
-                                      }`}
-                                    >
-                                      {item.isAvailable ? 'ACTIVE' : 'OFF'}
+                                  {/* Stock Status & Toggle */}
+                                  <div className="mt-3.5">
+                                    <span className={`text-xs font-bold block mb-1 ${
+                                      item.isAvailable ? 'text-[#073653]' : 'text-slate-400'
+                                    }`}>
+                                      {item.isAvailable ? 'In Stock' : 'Sold Out'}
                                     </span>
+
+                                    <div className="flex flex-col items-start gap-1">
+                                      {/* Availability Toggle Switch */}
+                                      <button
+                                        type="button"
+                                        disabled={item.isArchived || isAvailUpdating || item.price === null}
+                                        onClick={() => handleToggleItemAvailability(item.id, item.isAvailable)}
+                                        className={`w-11 h-6 rounded-full transition-colors flex items-center p-0.5 cursor-pointer disabled:cursor-not-allowed ${
+                                          item.isAvailable ? 'bg-[#00B894] justify-end' : 'bg-slate-300 justify-start'
+                                        }`}
+                                        aria-label={`Toggle availability for ${item.name}`}
+                                      >
+                                        <span className="w-5 h-5 rounded-full bg-white shadow-sm block transition-transform" />
+                                      </button>
+
+                                      {/* Active Badge */}
+                                      <span
+                                        className={`px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
+                                          item.isAvailable
+                                            ? 'bg-[#DFF7F2] text-[#009E7E]'
+                                            : 'bg-slate-100 text-slate-400'
+                                        }`}
+                                      >
+                                        {item.isAvailable ? 'ACTIVE' : 'OFF'}
+                                      </span>
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
 
-                              {/* Food Image: Consistent square container with anchored Plus button (outside overflow-hidden) */}
-                              <div className="relative shrink-0">
-                                <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl bg-white border border-[#F2ECE4] shadow-sm flex items-center justify-center overflow-hidden p-1.5">
-                                  <img
-                                    src={getItemImage(item)}
-                                    alt={item.name}
-                                    className="w-full h-full object-contain"
-                                    onError={(e) => {
-                                      (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80';
-                                    }}
-                                  />
+                                {/* Food Image: Consistent square container with dedicated Image Upload Plus button (Requirement 2) */}
+                                <div className="relative shrink-0">
+                                  <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-2xl bg-white border border-[#F2ECE4] shadow-sm flex items-center justify-center overflow-hidden p-1.5">
+                                    <img
+                                      src={getItemImage(item)}
+                                      alt={item.name}
+                                      className="w-full h-full object-contain"
+                                      onError={(e) => {
+                                        (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=400&q=80';
+                                      }}
+                                    />
+                                  </div>
+                                  {/* Dedicated Image Upload Button: Opens ONLY Image Upload Modal (Requirement 2) */}
+                                  <button
+                                    type="button"
+                                    onClick={() => openImageUploadModal(item)}
+                                    title="Upload or change image"
+                                    aria-label={`Upload image for ${item.name}`}
+                                    className="absolute -top-2.5 right-0 z-10 w-6 h-6 rounded-full bg-white shadow-md border border-slate-100 text-[#073653] flex items-center justify-center hover:scale-105 hover:bg-[#F0FDF4] transition cursor-pointer"
+                                  >
+                                    <Plus className="w-3.5 h-3.5 text-[#073653]" />
+                                  </button>
                                 </div>
-                                <button
-                                  type="button"
-                                  onClick={() => openEditItemModal(item)}
-                                  title="Edit item details"
-                                  className="absolute -top-2.5 right-0 z-10 w-6 h-6 rounded-full bg-white shadow-md border border-slate-100 text-[#073653] flex items-center justify-center hover:scale-105 hover:bg-[#F0FDF4] transition cursor-pointer"
-                                >
-                                  <Plus className="w-3.5 h-3.5 text-[#073653]" />
-                                </button>
                               </div>
                             </div>
-                          </div>
 
-                          {/* Card Footer: Peach/Cream Action Bar */}
-                          <div className="mt-3 bg-[#FFF7F0] border border-[#FDE8D7] rounded-xl px-3 py-1.5 flex items-center justify-around gap-2">
-                            <button
-                              type="button"
-                              onClick={() => openEditItemModal(item)}
-                              className="font-bold text-xs text-[#073653] hover:text-[#00B894] transition flex items-center gap-1.5 py-0.5 cursor-pointer"
-                            >
-                              <Edit className="w-3.5 h-3.5 text-[#073653]" />
-                              <span>Edit</span>
-                            </button>
-
-                            <div className="w-[1px] h-3.5 bg-[#FDE8D7]" />
-
-                            {item.isArchived ? (
+                            {/* Card Footer: Peach/Cream Action Bar */}
+                            <div className="mt-3 bg-[#FFF7F0] border border-[#FDE8D7] rounded-xl px-3 py-1.5 flex items-center justify-around gap-2">
                               <button
                                 type="button"
-                                disabled={isRestoring}
-                                onClick={() => setConfirmRestoreItem(item)}
-                                className="font-bold text-xs text-[#00B894] hover:text-[#00a382] transition flex items-center gap-1.5 py-0.5 cursor-pointer"
+                                onClick={() => openEditItemModal(item)}
+                                className="font-bold text-xs text-[#073653] hover:text-[#00B894] transition flex items-center gap-1.5 py-0.5 cursor-pointer"
                               >
-                                {isRestoring ? (
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                ) : (
-                                  <RotateCcw className="w-3.5 h-3.5 text-[#00B894]" />
-                                )}
-                                <span>Restore</span>
+                                <Edit className="w-3.5 h-3.5 text-[#073653]" />
+                                <span>Edit</span>
                               </button>
-                            ) : (
-                              <button
-                                type="button"
-                                disabled={isArchiving}
-                                onClick={() => setConfirmArchiveItem(item)}
-                                className="font-bold text-xs text-[#E53935] hover:text-[#c62828] transition flex items-center gap-1.5 py-0.5 cursor-pointer"
-                              >
-                                {isArchiving ? (
-                                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                ) : (
-                                  <Trash2 className="w-3.5 h-3.5 text-[#E53935]" />
-                                )}
-                                <span>Archive</span>
-                              </button>
-                            )}
+
+                              <div className="w-[1px] h-3.5 bg-[#FDE8D7]" />
+
+                              {item.isArchived ? (
+                                <button
+                                  type="button"
+                                  disabled={isRestoring}
+                                  onClick={() => setConfirmRestoreItem(item)}
+                                  className="font-bold text-xs text-[#00B894] hover:text-[#00a382] transition flex items-center gap-1.5 py-0.5 cursor-pointer"
+                                >
+                                  {isRestoring ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <RotateCcw className="w-3.5 h-3.5 text-[#00B894]" />
+                                  )}
+                                  <span>Restore</span>
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  disabled={isArchiving}
+                                  onClick={() => setConfirmArchiveItem(item)}
+                                  className="font-bold text-xs text-[#E53935] hover:text-[#c62828] transition flex items-center gap-1.5 py-0.5 cursor-pointer"
+                                >
+                                  {isArchiving ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="w-3.5 h-3.5 text-[#E53935]" />
+                                  )}
+                                  <span>Archive</span>
+                                </button>
+                              )}
+                            </div>
                           </div>
-                        </div>
+                        );
+                      };
+
+                      return (
+                        <>
+                          {/* 1. In-Stock Items First (Requirement 4) */}
+                          {inStockMenuItems.map(item => renderCard(item))}
+
+                          {/* Subtle Horizontal Divider & Shadow between In-Stock & Out-of-Stock groups (Requirement 4) */}
+                          {inStockMenuItems.length > 0 && outOfStockMenuItems.length > 0 && (
+                            <div className="col-span-full my-4 py-1 flex items-center gap-3">
+                              <div className="h-[1px] flex-1 bg-gradient-to-r from-transparent via-[#BFEBDD]/80 to-[#BFEBDD]/20 shadow-[0_1px_2px_rgba(7,54,83,0.05)]" />
+                              <span className="text-[11px] font-bold uppercase tracking-wider text-[#64839A] bg-[#F4FAF7] px-3.5 py-1 rounded-full border border-[#BFEBDD]/70 shadow-xs flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-slate-300 inline-block" />
+                                <span>Out of Stock ({outOfStockMenuItems.length})</span>
+                              </span>
+                              <div className="h-[1px] flex-1 bg-gradient-to-l from-transparent via-[#BFEBDD]/80 to-[#BFEBDD]/20 shadow-[0_1px_2px_rgba(7,54,83,0.05)]" />
+                            </div>
+                          )}
+
+                          {/* 2. Out-of-Stock Items Next (Requirement 4) */}
+                          {outOfStockMenuItems.map(item => renderCard(item))}
+                        </>
                       );
-                    })}
+                    })()}
                   </div>
                 )}
               </div>
@@ -4472,6 +4740,324 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL: DELETE CATEGORY (Requirement 1) */}
+      {/* ========================================================= */}
+      {isDeleteCategoryOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full border border-slate-200 shadow-2xl animate-scaleUp">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center">
+                  <Trash2 className="w-4 h-4" />
+                </div>
+                <h3 className="text-sm font-black text-[#073653]">Delete Existing Category</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsDeleteCategoryOpen(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleDeleteCategory} className="mt-4 space-y-4">
+              <div>
+                <label className="text-xs font-bold text-[#073653] block mb-1.5">
+                  Select Category to Delete
+                </label>
+                {categories.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic">No categories available to delete.</p>
+                ) : (
+                  <select
+                    value={deleteCategorySelectedId}
+                    onChange={e => {
+                      setDeleteCategorySelectedId(e.target.value);
+                      setDeleteCategoryError(null);
+                    }}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-[#073653] focus:outline-none focus:ring-2 focus:ring-rose-500/20 min-h-[44px]"
+                  >
+                    {categories.map(c => {
+                      const count = menuItems.filter(m => m.categoryId === c.id).length;
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {c.name} ({count} {count === 1 ? 'item' : 'items'})
+                        </option>
+                      );
+                    })}
+                  </select>
+                )}
+              </div>
+
+              {/* Status and In-Use Accidental Deletion Protection (Requirement 1) */}
+              {(() => {
+                const selectedCat = categories.find(c => c.id === deleteCategorySelectedId);
+                const itemsInSelected = menuItems.filter(m => m.categoryId === deleteCategorySelectedId);
+                const isInUse = itemsInSelected.length > 0;
+
+                if (!selectedCat) return null;
+
+                if (isInUse) {
+                  return (
+                    <div className="p-3.5 bg-amber-50/90 border border-amber-200/80 rounded-2xl text-xs space-y-1">
+                      <div className="flex items-center gap-1.5 text-amber-800 font-extrabold">
+                        <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <span>Cannot Delete: Category In Use</span>
+                      </div>
+                      <p className="text-[11px] text-amber-900 leading-relaxed pl-5.5">
+                        Category <strong className="font-bold">"{selectedCat.name}"</strong> is currently assigned to{' '}
+                        <strong className="font-bold">{itemsInSelected.length} menu item(s)</strong> (
+                        {itemsInSelected.slice(0, 3).map(i => i.name).join(', ')}
+                        {itemsInSelected.length > 3 ? '...' : ''}
+                        ). To prevent accidental loss of menu items, reassign or remove these items before deleting the category.
+                      </p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="p-3 bg-[#DFF3E8]/70 border border-[#BFEBDD] rounded-2xl text-xs flex items-center gap-2 text-[#0B725C]">
+                    <CheckCircle2 className="w-4 h-4 text-[#00B894] shrink-0" />
+                    <span>Category <strong>"{selectedCat.name}"</strong> has no menu items and can be safely removed.</span>
+                  </div>
+                );
+              })()}
+
+              {deleteCategoryError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                  <span>{deleteCategoryError}</span>
+                </div>
+              )}
+
+              <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsDeleteCategoryOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 min-h-[42px] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                {(() => {
+                  const itemsInSelected = menuItems.filter(m => m.categoryId === deleteCategorySelectedId);
+                  const isBlocked = itemsInSelected.length > 0 || !deleteCategorySelectedId;
+
+                  return (
+                    <button
+                      type="submit"
+                      disabled={isBlocked || deleteCategoryLoading}
+                      className="px-5 py-2 rounded-xl text-xs font-black bg-rose-600 hover:bg-rose-700 disabled:bg-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed text-white shadow-sm transition flex items-center gap-1.5 min-h-[42px] cursor-pointer"
+                    >
+                      {deleteCategoryLoading ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-3.5 h-3.5" />
+                      )}
+                      <span>Delete Category</span>
+                    </button>
+                  );
+                })()}
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL: DEDICATED IMAGE UPLOAD FOR SINGLE MENU ITEM (Requirement 2) */}
+      {/* ========================================================= */}
+      {imageUploadItem && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in">
+          <div className="bg-white rounded-3xl p-6 max-w-md w-full border border-[#BFEBDD] shadow-2xl space-y-4 animate-scaleUp">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div>
+                <h3 className="text-base font-black text-[#073653]">
+                  Update Food Image
+                </h3>
+                <p className="text-xs text-[#64839A] mt-0.5 font-medium">
+                  {imageUploadItem.name}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setImageUploadItem(null)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Mode Tabs */}
+            <div className="grid grid-cols-2 p-1 bg-slate-100/80 rounded-2xl gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setImageUploadMode('UPLOAD');
+                  setImageUploadError(null);
+                }}
+                className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                  imageUploadMode === 'UPLOAD'
+                    ? 'bg-white text-[#073653] shadow-xs'
+                    : 'text-[#64839A] hover:text-[#073653]'
+                }`}
+              >
+                <Upload className="w-3.5 h-3.5" />
+                <span>Upload Device File</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setImageUploadMode('URL');
+                  setImageUploadError(null);
+                }}
+                className={`py-2 px-3 rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer ${
+                  imageUploadMode === 'URL'
+                    ? 'bg-white text-[#073653] shadow-xs'
+                    : 'text-[#64839A] hover:text-[#073653]'
+                }`}
+              >
+                <ImageIcon className="w-3.5 h-3.5" />
+                <span>Paste Image URL</span>
+              </button>
+            </div>
+
+            {/* Mode 1: Device Upload */}
+            {imageUploadMode === 'UPLOAD' && (
+              <div className="space-y-3">
+                <label className="border-2 border-dashed border-[#BFEBDD] hover:border-[#00B894] rounded-2xl p-5 flex flex-col items-center justify-center gap-2 cursor-pointer transition bg-[#F9FDFC]">
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={handleDeviceImageSelected}
+                    className="hidden"
+                  />
+                  <div className="w-10 h-10 rounded-full bg-[#DFF3E8] text-[#00B894] flex items-center justify-center shadow-xs">
+                    <Upload className="w-5 h-5" />
+                  </div>
+                  <span className="text-xs font-bold text-[#073653]">
+                    Click to browse from your device
+                  </span>
+                  <span className="text-[10px] text-slate-400">
+                    JPG, PNG, or WebP (max 2.5MB) • Standardises to 600×600 px
+                  </span>
+                </label>
+
+                {singleItemImageLoading && (
+                  <div className="flex items-center justify-center gap-2 py-2 text-xs text-[#00B894] font-bold">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Processing & standardising image...</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Mode 2: Paste URL */}
+            {imageUploadMode === 'URL' && (
+              <div className="space-y-2">
+                <label className="text-xs font-bold text-[#073653] block">Image URL</label>
+                <input
+                  type="url"
+                  placeholder="https://images.unsplash.com/..."
+                  value={imageUploadUrl}
+                  onChange={e => {
+                    setImageUploadUrl(e.target.value);
+                    setImageUploadPreview(e.target.value);
+                    setImageUploadError(null);
+                  }}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs text-[#073653] focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 min-h-[44px]"
+                />
+              </div>
+            )}
+
+            {/* Image Preview Box */}
+            <div className="p-3 bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-16 h-16 rounded-xl bg-white border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center p-1">
+                  {imageUploadPreview ? (
+                    <img
+                      src={imageUploadPreview}
+                      alt="Preview"
+                      className="w-full h-full object-contain"
+                      onError={() => setImageUploadError('Invalid image URL or unable to load preview.')}
+                    />
+                  ) : (
+                    <img
+                      src={getItemImage(imageUploadItem)}
+                      alt="Current"
+                      className="w-full h-full object-contain opacity-60"
+                    />
+                  )}
+                </div>
+                <div>
+                  <span className="text-xs font-black text-[#073653] block">
+                    {imageUploadPreview ? 'New Image Ready' : 'Current Dish Image'}
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    Square 600×600 WebP (high quality)
+                  </span>
+                </div>
+              </div>
+
+              {imageUploadItem.imageUrl && (
+                <button
+                  type="button"
+                  onClick={() => handleSaveItemImage(null)}
+                  disabled={imageUploadSaving}
+                  className="text-xs font-bold text-rose-600 hover:text-rose-700 hover:underline cursor-pointer"
+                >
+                  Reset Default
+                </button>
+              )}
+            </div>
+
+            {/* Success & Error Feedback */}
+            {imageUploadSuccess && (
+              <div className="p-3 bg-[#DFF3E8]/80 border border-[#BFEBDD] rounded-xl text-xs text-[#0B725C] flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-[#00B894] shrink-0" />
+                <span>{imageUploadSuccess}</span>
+              </div>
+            )}
+            {imageUploadError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-500 shrink-0" />
+                <span>{imageUploadError}</span>
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="pt-2 flex items-center justify-end gap-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setImageUploadItem(null)}
+                disabled={imageUploadSaving}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 min-h-[42px] cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSaveItemImage(imageUploadMode === 'UPLOAD' ? imageUploadPreview : imageUploadUrl)}
+                disabled={imageUploadSaving || singleItemImageLoading || (!imageUploadPreview && !imageUploadUrl)}
+                className="px-5 py-2 rounded-xl text-xs font-black bg-[#00B894] hover:bg-[#00a382] disabled:opacity-40 disabled:cursor-not-allowed text-white shadow-sm transition flex items-center gap-1.5 min-h-[42px] cursor-pointer"
+              >
+                {imageUploadSaving ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Saving Image...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Save Image</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -39,7 +39,8 @@ import {
   ExternalLink,
   RotateCcw,
   Receipt,
-  CalendarCheck
+  CalendarCheck,
+  RefreshCw
 } from 'lucide-react';
 import {
   validatePickupTimeCanonical,
@@ -218,6 +219,12 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
   });
   const [isLoadingMenu, setIsLoadingMenu] = useState(true);
   const [isLoadingOrders, setIsLoadingOrders] = useState(true);
+  const [isRefreshingMenu, setIsRefreshingMenu] = useState(false);
+  const [menuSyncError, setMenuSyncError] = useState<string | null>(null);
+  const isFetchingMenuRef = useRef(false);
+
+  // Item detail preview modal (Show seller-added descriptions only when customer selects that item)
+  const [selectedDetailItem, setSelectedDetailItem] = useState<MenuItem | null>(null);
 
   // Time selection for ordering (24-hour internal HH:mm) & Day (Today vs Tomorrow)
   const [selectedPickupDay, setSelectedPickupDay] = useState<'TODAY' | 'TOMORROW'>('TODAY');
@@ -294,17 +301,39 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
   // Fetch Menu
   const fetchMenu = async (isInitial = false, canteenIdOverride?: string) => {
+    if (isFetchingMenuRef.current) return;
+    isFetchingMenuRef.current = true;
     try {
-      if (isInitial) setIsLoadingMenu(true);
+      if (isInitial) {
+        setIsLoadingMenu(true);
+      } else {
+        setIsRefreshingMenu(true);
+      }
       const targetId = canteenIdOverride || selectedCanteenId;
       const url = targetId ? `/api/menu?canteenId=${targetId}` : '/api/menu';
-      const res = await fetch(url);
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) {
+        throw new Error('Failed to fetch menu');
+      }
       const data = await res.json();
       if (data.categories) setCategories(data.categories);
-      if (data.items) setMenuItems(data.items);
-    } catch {}
-    finally {
+      if (data.items) {
+        setMenuItems(data.items);
+        setSelectedDetailItem(prev => {
+          if (!prev) return null;
+          const updated = data.items.find((i: MenuItem) => i.id === prev.id);
+          return updated || null;
+        });
+      }
+      setMenuSyncError(null);
+    } catch {
+      if (!isInitial) {
+        setMenuSyncError('Failed to refresh menu items');
+      }
+    } finally {
       if (isInitial) setIsLoadingMenu(false);
+      setIsRefreshingMenu(false);
+      isFetchingMenuRef.current = false;
     }
   };
 
@@ -342,6 +371,51 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
     }, 15000);
 
     return () => clearInterval(interval);
+  }, [selectedCanteenId]);
+
+  // Real-time synchronization for seller-to-customer updates (BroadcastChannel, storage events, tab visibility, polling)
+  useEffect(() => {
+    let bc: BroadcastChannel | null = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        bc = new BroadcastChannel('qless_menu_channel');
+        bc.onmessage = (event) => {
+          if (event.data?.type === 'MENU_UPDATED') {
+            fetchMenu(false);
+          }
+        };
+      } catch {}
+    }
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === 'qless_menu_sync_timestamp') {
+        fetchMenu(false);
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+
+    const handleFocus = () => fetchMenu(false);
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        fetchMenu(false);
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleVisibility);
+
+    const pollInterval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        fetchMenu(false);
+      }
+    }, 5000);
+
+    return () => {
+      if (bc) bc.close();
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleVisibility);
+      clearInterval(pollInterval);
+    };
   }, [selectedCanteenId]);
 
   // Synchronize cart state to localStorage for persistence across reloads/navigation
@@ -696,8 +770,9 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
     }
   };
 
-  // Filtered Menu Items
+  // Filtered Menu Items: Promptly exclude unavailable or archived items
   const filteredItems = menuItems.filter(item => {
+    if (item.isArchived || !item.isAvailable) return false;
     if (menuMode === 'TODAY' && !item.isTodaysMenu) return false;
     if (selectedCategory !== 'ALL' && item.categoryId !== selectedCategory) return false;
     if (searchQuery.trim()) {
@@ -1350,13 +1425,13 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
               {/* Center: Search Field */}
               <div className="relative flex-1 max-w-lg">
-                <Search className="w-4 h-4 text-[#64839A] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <Search className="w-3.5 h-3.5 text-slate-400/80 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="text"
                   placeholder="आज क्या खाएं?"
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
+                  className="w-full pl-8 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
                 />
                 {searchQuery && (
                   <button
@@ -1367,6 +1442,21 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                   </button>
                 )}
               </div>
+
+              {/* Syncing indicator / Error indicator */}
+              {isRefreshingMenu && (
+                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold animate-pulse shrink-0">
+                  <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />
+                  <span>Syncing menu...</span>
+                </div>
+              )}
+              {menuSyncError && (
+                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-xs font-medium shrink-0">
+                  <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                  <span>{menuSyncError}</span>
+                  <button onClick={() => fetchMenu(false)} className="underline font-semibold ml-1 hover:text-rose-900">Retry</button>
+                </div>
+              )}
 
               {/* Right: Grid / List View Toggle */}
               <div className="flex items-center gap-2 shrink-0">
@@ -1400,13 +1490,13 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
               {/* Row 1: Search Box + Grid & List Buttons immediately to the right */}
               <div className="flex items-center gap-2 w-full">
                 <div className="relative flex-1">
-                  <Search className="w-4 h-4 text-[#64839A] absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <Search className="w-3.5 h-3.5 text-slate-400/80 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
                     type="text"
                     placeholder="आज क्या खाएं?"
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
-                    className="w-full pl-9 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
+                    className="w-full pl-8 pr-7 py-2 bg-white/90 backdrop-blur-sm border border-[#BFEBDD]/80 rounded-full text-xs text-[#073653] placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-[#00B894]/30 shadow-sm"
                   />
                   {searchQuery && (
                     <button
@@ -1444,6 +1534,21 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                   </button>
                 </div>
               </div>
+
+              {/* Mobile Syncing Indicator */}
+              {isRefreshingMenu && (
+                <div className="flex sm:hidden items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold animate-pulse self-start">
+                  <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />
+                  <span>Syncing menu...</span>
+                </div>
+              )}
+              {menuSyncError && (
+                <div className="flex sm:hidden items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-xs font-medium self-start">
+                  <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                  <span>{menuSyncError}</span>
+                  <button onClick={() => fetchMenu(false)} className="underline font-semibold ml-1">Retry</button>
+                </div>
+              )}
 
               {/* Row 2: Today's Menu & Full Menu Tabs */}
               <div className="inline-flex p-1 bg-white/90 backdrop-blur-sm rounded-full border border-[#BFEBDD]/70 shadow-sm self-start" role="tablist">
@@ -1560,7 +1665,8 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                   return (
                     <div
                       key={item.id}
-                      className="bg-white rounded-[20px] p-3 border border-[#F2ECE4] shadow-[0_2px_8px_rgba(7,54,83,0.04)] hover:shadow-[0_4px_16px_rgba(7,54,83,0.08)] transition-all flex flex-col justify-between h-full relative group"
+                      onClick={() => setSelectedDetailItem(item)}
+                      className="bg-white rounded-[20px] p-3 border border-[#F2ECE4] shadow-[0_2px_8px_rgba(7,54,83,0.04)] hover:shadow-[0_4px_16px_rgba(7,54,83,0.08)] transition-all flex flex-col justify-between h-full relative group cursor-pointer"
                     >
                       <div>
                         {/* Food Image with Floating Favorite Heart */}
@@ -1602,7 +1708,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                       {/* Initial "+ Add" button, replacing with Stepper when inCart */}
                       {!inCart || inCart.quantity === 0 ? (
                         <button
-                          onClick={() => handleIncrement(item)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleIncrement(item);
+                          }}
                           disabled={!item.isAvailable || isPriceNotFixed}
                           className="mt-3 w-full py-2 px-3 rounded-xl bg-[#00B894] hover:bg-[#00a382] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer min-h-[34px]"
                           aria-label={`Add ${item.name} to cart`}
@@ -1611,9 +1720,15 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                           <span>Add</span>
                         </button>
                       ) : (
-                        <div className="mt-3 bg-[#F1F6F4] border border-[#BFEBDD]/60 rounded-xl p-1 flex items-center justify-between min-h-[34px]">
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          className="mt-3 bg-[#F1F6F4] border border-[#BFEBDD]/60 rounded-xl p-1 flex items-center justify-between min-h-[34px]"
+                        >
                           <button
-                            onClick={() => handleDecrement(item.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDecrement(item.id);
+                            }}
                             className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-white text-[#073653] flex items-center justify-center font-bold hover:bg-slate-100 transition text-sm shadow-xs cursor-pointer"
                             aria-label="Decrease quantity"
                           >
@@ -1623,7 +1738,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                             {inCart.quantity}
                           </span>
                           <button
-                            onClick={() => handleIncrement(item)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleIncrement(item);
+                            }}
                             disabled={!item.isAvailable || isPriceNotFixed}
                             className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-[#00B894] hover:bg-[#00a382] text-white flex items-center justify-center font-bold transition text-sm disabled:opacity-40 disabled:cursor-not-allowed shadow-xs cursor-pointer"
                             aria-label="Increase quantity"
@@ -1652,7 +1770,8 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                     return (
                       <div
                         key={item.id}
-                        className="bg-white/95 rounded-2xl border border-[#BFEBDD]/60 p-3 sm:p-3.5 shadow-sm hover:shadow-md transition-all flex items-center justify-between gap-3"
+                        onClick={() => setSelectedDetailItem(item)}
+                        className="bg-white/95 rounded-2xl border border-[#BFEBDD]/60 p-3 sm:p-3.5 shadow-sm hover:shadow-md transition-all flex items-center justify-between gap-3 cursor-pointer"
                       >
                         {/* Left: Square Dish Image + Title & Price */}
                         <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -1679,10 +1798,16 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                         </div>
 
                         {/* Right: Stepper + Favorite Heart */}
-                        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+                        <div
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex items-center gap-2 sm:gap-3 shrink-0"
+                        >
                           {!inCart || inCart.quantity === 0 ? (
                             <button
-                              onClick={() => handleIncrement(item)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleIncrement(item);
+                              }}
                               disabled={!item.isAvailable || isPriceNotFixed}
                               className="py-1.5 px-3 rounded-xl bg-[#00B894] hover:bg-[#00a382] text-white text-xs font-bold flex items-center justify-center gap-1 shadow-xs transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer min-h-[32px]"
                               aria-label={`Add ${item.name} to cart`}
@@ -1693,7 +1818,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                           ) : (
                             <div className="flex items-center gap-1 bg-[#F1F6F4] rounded-xl p-1 border border-[#BFEBDD]/60 min-h-[32px]">
                               <button
-                                onClick={() => handleDecrement(item.id)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDecrement(item.id);
+                                }}
                                 className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-white flex items-center justify-center text-[#073653] hover:bg-slate-100 font-bold shadow-xs cursor-pointer"
                                 aria-label="Decrease quantity"
                               >
@@ -1703,7 +1831,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                                 {inCart.quantity}
                               </span>
                               <button
-                                onClick={() => handleIncrement(item)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleIncrement(item);
+                                }}
                                 disabled={!item.isAvailable || isPriceNotFixed}
                                 className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-[#00B894] hover:bg-[#00a382] text-white flex items-center justify-center font-bold transition shadow-xs disabled:opacity-40 cursor-pointer"
                                 aria-label="Increase quantity"
@@ -1714,7 +1845,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                           )}
 
                           <button
-                            onClick={() => toggleFavorite(item.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleFavorite(item.id);
+                            }}
                             className="p-1.5 text-slate-300 hover:text-rose-500 transition cursor-pointer"
                             aria-label="Add to favorites"
                           >
@@ -2528,6 +2662,183 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                     >
                       {isDeletingAccount && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                       <span>Confirm Delete</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Item Detail Preview Modal (Shows seller-added description ONLY when customer selects this item) */}
+            {selectedDetailItem && (
+              <div
+                className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs"
+                onClick={() => setSelectedDetailItem(null)}
+              >
+                <div
+                  className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-100 flex flex-col max-h-[90vh]"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Dish Image */}
+                  <div className="relative w-full h-56 sm:h-64 bg-slate-100">
+                    <img
+                      src={getItemImage(selectedDetailItem)}
+                      alt={selectedDetailItem.name}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src =
+                          'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=600&q=80';
+                      }}
+                    />
+                    <button
+                      onClick={() => setSelectedDetailItem(null)}
+                      className="absolute top-3 right-3 p-2 rounded-full bg-white/90 hover:bg-white text-slate-600 hover:text-slate-900 shadow-md transition cursor-pointer"
+                      aria-label="Close details"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleFavorite(selectedDetailItem.id);
+                      }}
+                      className="absolute top-3 left-3 p-2 rounded-full bg-white/90 hover:bg-white shadow-md transition cursor-pointer"
+                      aria-label="Toggle favorite"
+                    >
+                      <Heart
+                        className={`w-4 h-4 ${
+                          favorites.has(selectedDetailItem.id)
+                            ? 'fill-rose-500 text-rose-500'
+                            : 'text-slate-600'
+                        }`}
+                      />
+                    </button>
+
+                    <div className="absolute bottom-3 left-3">
+                      <span className="px-3 py-1 rounded-full bg-slate-900/75 backdrop-blur-md text-white text-[11px] font-bold tracking-wide uppercase">
+                        {categories.find(c => c.id === selectedDetailItem.categoryId)?.name || 'Menu Item'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Body Content */}
+                  <div className="p-5 overflow-y-auto flex-1 space-y-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span
+                            className={`inline-flex items-center justify-center w-4 h-4 rounded-sm border p-0.5 ${
+                              selectedDetailItem.isVegetarian
+                                ? 'border-emerald-600'
+                                : 'border-rose-600'
+                            }`}
+                            title={selectedDetailItem.isVegetarian ? 'Vegetarian' : 'Non-Vegetarian'}
+                          >
+                            <span
+                              className={`w-2 h-2 rounded-full ${
+                                selectedDetailItem.isVegetarian
+                                  ? 'bg-emerald-600'
+                                  : 'bg-rose-600'
+                              }`}
+                            />
+                          </span>
+                          <span className="text-[11px] font-semibold text-slate-500">
+                            {selectedDetailItem.isVegetarian ? 'Vegetarian' : 'Non-Vegetarian'}
+                          </span>
+                        </div>
+                        <h3 className="text-xl font-black text-[#073653] leading-tight">
+                          {selectedDetailItem.name}
+                        </h3>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className="text-xl font-black text-[#0284C7]">
+                          {selectedDetailItem.price === null || selectedDetailItem.price === undefined
+                            ? 'Price not fixed'
+                            : `₹${parseFloat(selectedDetailItem.price as string).toFixed(2)}`}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Actual Seller-added description */}
+                    {selectedDetailItem.description && selectedDetailItem.description.trim() ? (
+                      <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-1">
+                        <div className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wider text-slate-600">
+                          <Sparkles className="w-3.5 h-3.5 text-[#00B894]" />
+                          <span>Description</span>
+                        </div>
+                        <p className="text-xs sm:text-sm text-slate-700 leading-relaxed whitespace-pre-line">
+                          {selectedDetailItem.description}
+                        </p>
+                      </div>
+                    ) : null}
+
+                    {/* Availability */}
+                    <div className="flex items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100">
+                      <span>Availability:</span>
+                      <span
+                        className={`font-bold ${
+                          selectedDetailItem.isAvailable ? 'text-emerald-600' : 'text-rose-600'
+                        }`}
+                      >
+                        {selectedDetailItem.isAvailable ? 'In Stock' : 'Currently Unavailable'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Modal Footer */}
+                  <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-3">
+                    {(() => {
+                      const inCart = cart.find(ci => ci.item.id === selectedDetailItem.id);
+                      const isPriceNotFixed =
+                        selectedDetailItem.price === null || selectedDetailItem.price === undefined;
+
+                      if (!inCart || inCart.quantity === 0) {
+                        return (
+                          <button
+                            onClick={() => handleIncrement(selectedDetailItem)}
+                            disabled={!selectedDetailItem.isAvailable || isPriceNotFixed}
+                            className="flex-1 py-3 px-4 rounded-2xl bg-[#00B894] hover:bg-[#00a382] text-white font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                          >
+                            <Plus className="w-4 h-4" />
+                            <span>Add to Cart</span>
+                          </button>
+                        );
+                      }
+
+                      return (
+                        <div className="flex-1 flex items-center justify-between bg-white border border-[#BFEBDD] rounded-2xl p-1.5 shadow-xs">
+                          <button
+                            onClick={() => handleDecrement(selectedDetailItem.id)}
+                            className="w-9 h-9 rounded-xl bg-slate-100 text-[#073653] flex items-center justify-center font-bold hover:bg-slate-200 transition cursor-pointer"
+                            aria-label="Decrease quantity"
+                          >
+                            <Minus className="w-4 h-4" />
+                          </button>
+                          <div className="flex flex-col items-center">
+                            <span className="text-sm font-black text-[#073653] font-mono">
+                              {inCart.quantity} in cart
+                            </span>
+                            <span className="text-[11px] font-semibold text-[#0284C7]">
+                              ₹{(parseFloat(selectedDetailItem.price as string) * inCart.quantity).toFixed(2)}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => handleIncrement(selectedDetailItem)}
+                            disabled={!selectedDetailItem.isAvailable || isPriceNotFixed}
+                            className="w-9 h-9 rounded-xl bg-[#00B894] hover:bg-[#00a382] text-white flex items-center justify-center font-bold transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                            aria-label="Increase quantity"
+                          >
+                            <Plus className="w-4 h-4" />
+                          </button>
+                        </div>
+                      );
+                    })()}
+
+                    <button
+                      onClick={() => setSelectedDetailItem(null)}
+                      className="py-3 px-4 rounded-2xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-sm transition cursor-pointer"
+                    >
+                      Close
                     </button>
                   </div>
                 </div>
