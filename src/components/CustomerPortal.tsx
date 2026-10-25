@@ -1782,7 +1782,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
             {/* SKELETON LOADING STATE */}
             {isLoadingMenu && menuItems.length === 0 ? (
-              <div className="grid grid-cols-2 min-[540px]:grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 animate-pulse justify-center w-full max-w-full mx-auto">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 animate-pulse justify-center w-full max-w-full mx-auto">
                 {[...Array(12)].map((_, i) => (
                   <div key={i} className="bg-white/90 rounded-2xl sm:rounded-[20px] border border-[#F2ECE4] p-2.5 sm:p-3 space-y-2.5">
                     <div className="w-full aspect-square sm:aspect-[4/3] bg-slate-100 rounded-xl" />
@@ -1801,7 +1801,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
               /* ========================================================= */
               /* 6. GRID VIEW MATCHING REFERENCES (2 Cols Mobile, 6 Cols Desktop) */
               /* ========================================================= */
-              <div className="grid grid-cols-2 min-[540px]:grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 items-stretch justify-center w-full max-w-full mx-auto">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 items-stretch justify-center w-full max-w-full mx-auto">
                 {filteredItems.map(item => {
                   const inCart = cart.find(ci => ci.item.id === item.id);
                   const isPriceNotFixed = item.price === null || item.price === undefined;

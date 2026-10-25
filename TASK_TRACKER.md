@@ -545,7 +545,7 @@ This audit was conducted before starting Prompt 1 to protect existing work and p
 #### 2. Mobile Card Shape & Square Food Images
 - `[x]` 3. Update mobile food image to square aspect ratio (`aspect-square sm:aspect-[4/3]`) with `object-cover` so it occupies most of the card without distortion.
 - `[x]` 4. Update card container to a balanced, near-square shape with rounded corners (`rounded-2xl sm:rounded-[20px]`) and equal 10px padding on all sides (`p-2.5 sm:p-3`).
-- `[x]` 5. Center grid within available screen width with responsive columns: `grid-cols-2 min-[540px]:grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6`.
+- `[x]` 5. Center grid within available screen width with responsive columns: 2 columns on mobile, 3 columns on small tablets (`sm:grid-cols-3`), 4 on `md:`, 5 on `lg:`, 6 on `xl:`.
 - `[x]` 6. Apply comfortable gaps (`gap-3 sm:gap-4`) preventing cards from appearing crowded or excessively compact.
 - `[x]` 7. Keep item name, ₹ price, and "+ Add" button clearly visible without text/image overlap or clipping.
 - `[x]` 8. Preserve desktop and tablet sizing (`sm:`, `md:`, `lg:`, `xl:`) completely unchanged.
@@ -555,9 +555,9 @@ This audit was conducted before starting Prompt 1 to protect existing work and p
 - `[x]` 10. Run Next.js production build (`npm run build`) with zero errors (19/19 routes compiled).
 
 #### 4. Deployment & Live Verification
-- `[/]` 11. Review Git diff to ensure only targeted changes are included.
-- `[/]` 12. Commit and push changes to `origin/main`.
-- `[/]` 13. Verify live deployment on Vercel (`https://qless-v1-8-10-26.vercel.app/`).
+- `[x]` 11. Review Git diff to ensure only targeted changes are included.
+- `[x]` 12. Commit and push changes to `origin/main` (Commits: `77e92d1` & latest).
+- `[x]` 13. Verify live deployment on Vercel (`https://qless-v1-8-10-26.vercel.app/`).
 
 ---
 
@@ -565,8 +565,23 @@ This audit was conducted before starting Prompt 1 to protect existing work and p
 
 | File Path | Description of Changes |
 | :--- | :--- |
-| `src/components/CustomerPortal.tsx` | (1) Updated food image to `aspect-square sm:aspect-[4/3]` with `object-cover` so food images are square, large enough to occupy most of the card, and undistorted; (2) Adjusted card container to balanced near-square shape with `rounded-2xl sm:rounded-[20px]` and equal padding `p-2.5 sm:p-3`; (3) Responsive grid with comfortable gaps: `grid-cols-2 min-[540px]:grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 items-stretch justify-center w-full max-w-full mx-auto`; (4) Kept item name, ₹ price, and "+ Add" button (`min-h-[30px] sm:min-h-[34px]`) clearly visible without clipping; (5) Preserved desktop styling completely unchanged. |
+| `src/components/CustomerPortal.tsx` | (1) Updated food image to `aspect-square sm:aspect-[4/3]` with `object-cover` so food images are square, large enough to occupy most of the card, and undistorted; (2) Adjusted card container to balanced near-square shape with `rounded-2xl sm:rounded-[20px]` and equal padding `p-2.5 sm:p-3`; (3) Responsive grid with comfortable gaps: `grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 items-stretch justify-center w-full max-w-full mx-auto`; (4) Kept item name, ₹ price, and "+ Add" button (`min-h-[30px] sm:min-h-[34px]`) clearly visible without clipping; (5) Preserved desktop styling completely unchanged. |
 | `TASK_TRACKER.md` | Preserved all historical tasks and appended Customer Menu — Mobile Menu Card Shape and Spacing implementation details, checklist, and verification evidence. |
+
+### Live Verification Summary (Vercel Production)
+- **Live Site**: `https://qless-v1-8-10-26.vercel.app/`
+- **Deployment Status**: Commit `77e92d1` deployed and verified on Vercel.
+- **Mobile Viewport (390x844)**:
+  - Menu cards rendered with balanced near-square shape with smooth `rounded-2xl` corners and equal 10px padding on all sides.
+  - Food images are 1:1 square (`aspect-square`), large enough to occupy most of the card, using exact seller uploaded images with clean `object-cover` cropping without distortion.
+  - Item name, ₹ price, and "+ Add" button are clearly visible inside every card with zero text or image overlap and zero clipping.
+  - Clicking "+ Add" button correctly triggers the quantity stepper (`- 1 +`) and updates cart count.
+  - Comfortable 12px gaps (`gap-3`) ensure cards look clean, balanced, and easy to tap.
+- **Narrow Mobile Viewport (360x740)**:
+  - 2-column cards fit comfortably with equal left/right margins and comfortable gaps.
+- **Desktop Viewport (1440x900)**:
+  - 6-column desktop layout (`xl:grid-cols-6`) and original desktop card dimensions (`sm:aspect-[4/3]`, `p-3`, `text-base` headers/pricing, full-height action buttons) remain 100% preserved.
+
 
 
 
