@@ -582,6 +582,69 @@ This audit was conducted before starting Prompt 1 to protect existing work and p
 - **Desktop Viewport (1440x900)**:
   - 6-column desktop layout (`xl:grid-cols-6`) and original desktop card dimensions (`sm:aspect-[4/3]`, `p-3`, `text-base` headers/pricing, full-height action buttons) remain 100% preserved.
 
+---
+
+## Customer Menu — Mobile Customer Menu Card Size Only
+**Date**: October 25, 2026  
+**Scope**: (1) Mobile customer menu-item card visual matching against latest reference image (`media_1792942196188.png`): near-square proportions, rounded corners (`rounded-2xl sm:rounded-[20px]`), padding (`p-2.5 sm:p-3`), gap (`gap-2.5 sm:gap-4`), and centered alignment with exactly 2 cards per row (`grid-cols-2`); (2) Sizing calibrated so at least 6 menu items (3 full rows) are visible on a typical phone screen while scrolling; (3) Food image occupies approximately 60% of each card (`aspect-[4/3] rounded-xl overflow-hidden`) with crisp, undistorted `object-cover` presentation; (4) Visible card details: item name (`truncate`), ₹ price (`font-black text-[#0284C7]`), optional one-line seller-provided description (`line-clamp-1 mt-0.5 text-[10px] sm:text-xs text-[#64839A]`), and green "+ Add" button (`min-h-[30px] sm:min-h-[34px] bg-[#00B894]`); (5) Description area completely hidden when no description exists (`item.description && item.description.trim() ? ... : null`); (6) Actual menu data and exact seller-uploaded images only (no mock items, placeholder images, or invented descriptions); (7) Compact, well-aligned popup modal on card tap showing larger image, category, veg/non-veg status, and full description when available; Add/quantity stepper buttons with `e.stopPropagation()` so tapping them does not open the popup; (8) Change nothing else: desktop layout, seller/admin portals, APIs, database, cart, and authentication preserved 100% untouched.
+
+### Ordered Checklist of Requirements
+
+#### 1. Inspection & Visual Alignment
+- `[x]` 1. Inspect latest generated reference image (`media_1792942196188.png`) and existing mobile card component in `src/components/CustomerPortal.tsx`.
+- `[x]` 2. Verify database records for menu items to ensure only actual seller-uploaded images and descriptions are rendered.
+
+#### 2. Mobile Customer Menu Card Size & Image Proportions
+- `[x]` 3. Maintain exactly two cards per row on mobile (`grid-cols-2`), centered with equal left, middle, and right spacing (`gap-2.5 sm:gap-4 justify-center w-full max-w-full mx-auto`).
+- `[x]` 4. Configure food image to occupy approximately 60% of each card (`aspect-[4/3] rounded-xl overflow-hidden`) with smooth `object-cover` fitting.
+- `[x]` 5. Size cards such that at least six menu items (3 rows of 2 cards) are comfortably visible on a typical phone screen while scrolling.
+- `[x]` 6. Display item name, ₹ price (`#0284C7`), optional one-line seller-provided description (`line-clamp-1`), and green "+ Add" button (`#00B894`) clearly inside every card.
+- `[x]` 7. Completely hide the description container when an item has no description or empty description string.
+- `[x]` 8. Use only actual menu data and exact seller images from Menu Management without sample images or invented descriptions.
+
+#### 3. Item Details Popup Modal & Interaction Handling
+- `[x]` 9. Clicking/tapping anywhere on a menu card or its image/details opens a compact, well-aligned preview popup modal (`selectedDetailItem`).
+- `[x]` 10. Preview popup displays larger image, item category, veg/non-veg status, name, formatted price, full seller description (if present), availability status, and Add/Stepper controls.
+- `[x]` 11. Add and quantity stepper controls on the menu card include `e.stopPropagation()` so customer can add/adjust quantities without triggering the popup.
+
+#### 4. Scope Isolation & Zero Regressions
+- `[x]` 12. Desktop layout (`sm:`, `md:`, `lg:`, `xl:`) remains 100% preserved with original card sizing and 6-column grid.
+- `[x]` 13. Seller portal, admin portal, APIs, database schema, payment flow, and cart business logic remain completely untouched.
+
+#### 5. Automated Testing & Production Build
+- `[x]` 14. Run existing test suites: `test:hours` (28/28 Passed), `test:prompt4` (12/12 Passed), `test:targeted` (24/24 Passed) — Total 64/64 Passed.
+- `[x]` 15. Run Next.js production build (`npm run build`) with zero lint or compilation errors (19/19 routes generated).
+
+#### 6. Deployment & Live Verification
+- `[x]` 16. Audit Git diff to ensure only scoped files are modified.
+- `[x]` 17. Commit and push scoped changes to GitHub repository `nehaconnect/Qless-v1-8-10-26` on branch `main`.
+- `[x]` 18. Monitor Vercel production deployment and verify live mobile viewports (390px, 360px) and desktop (1440px).
+
+---
+
+### Files Changed & Verification Evidence
+
+| File Path | Description of Changes |
+| :--- | :--- |
+| `src/components/CustomerPortal.tsx` | (1) Updated mobile grid gap to `gap-2.5 sm:gap-4` with centered 2-column layout (`grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6`); (2) Set food image container to `aspect-[4/3] rounded-xl overflow-hidden` so food image occupies ~60% of card height without distortion; (3) Added optional one-line seller description (`line-clamp-1 mt-0.5 text-[10px] sm:text-xs text-[#64839A]`) rendered only when `item.description && item.description.trim()` exists, hidden entirely when null; (4) Retained compact full-width "+ Add" button (`min-h-[30px] sm:min-h-[34px] bg-[#00B894]`) and stepper controls with `e.stopPropagation()`; (5) Card click handler opens item detail preview modal; (6) Preserved desktop styling completely unchanged. |
+| `TASK_TRACKER.md` | Preserved all historical task entries and appended the Mobile Customer Menu Card Size Only requirements, checklist, and verification evidence. |
+
+### Live Verification Summary (Vercel Production)
+- **Live Site**: `https://qless-v1-8-10-26.vercel.app/`
+- **Deployment Status**: Commit deployed and verified live on Vercel.
+- **Mobile Viewport (390x844)**:
+  - Exact 2 cards per row (`grid-cols-2`), centered with equal left, middle, and right margins.
+  - Sizing fits 6 items (3 full rows) visible while scrolling down the page.
+  - Food image occupies ~60% of card height with clean `aspect-[4/3]` ratio matching the reference image.
+  - Item name, ₹ price, optional one-line description, and green "+ Add" button are clearly visible.
+  - Items without description hide the description area completely.
+  - Tapping card opens compact details popup; tapping "+ Add" increments cart quantity without opening popup.
+- **Narrow Mobile Viewport (360x740)**:
+  - 2-column grid renders comfortably without clipping or overflow.
+- **Desktop Viewport (1440x900)**:
+  - Desktop 6-column layout and styling remain 100% intact.
+
+
 
 
 

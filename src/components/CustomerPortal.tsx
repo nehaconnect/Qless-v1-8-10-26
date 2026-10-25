@@ -1782,10 +1782,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
             {/* SKELETON LOADING STATE */}
             {isLoadingMenu && menuItems.length === 0 ? (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 animate-pulse justify-center w-full max-w-full mx-auto">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2.5 sm:gap-4 animate-pulse justify-center w-full max-w-full mx-auto">
                 {[...Array(12)].map((_, i) => (
                   <div key={i} className="bg-white/90 rounded-2xl sm:rounded-[20px] border border-[#F2ECE4] p-2.5 sm:p-3 space-y-2.5">
-                    <div className="w-full aspect-square sm:aspect-[4/3] bg-slate-100 rounded-xl" />
+                    <div className="w-full aspect-[4/3] bg-slate-100 rounded-xl" />
                     <div className="h-4 bg-slate-200 rounded w-2/3" />
                     <div className="h-4 bg-slate-200 rounded w-1/3" />
                   </div>
@@ -1801,7 +1801,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
               /* ========================================================= */
               /* 6. GRID VIEW MATCHING REFERENCES (2 Cols Mobile, 6 Cols Desktop) */
               /* ========================================================= */
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 items-stretch justify-center w-full max-w-full mx-auto">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2.5 sm:gap-4 items-stretch justify-center w-full max-w-full mx-auto">
                 {filteredItems.map(item => {
                   const inCart = cart.find(ci => ci.item.id === item.id);
                   const isPriceNotFixed = item.price === null || item.price === undefined;
@@ -1815,8 +1815,8 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                       className="bg-white rounded-2xl sm:rounded-[20px] p-2.5 sm:p-3 border border-[#F2ECE4] shadow-[0_2px_8px_rgba(7,54,83,0.04)] hover:shadow-[0_4px_16px_rgba(7,54,83,0.08)] transition-all flex flex-col justify-between h-full relative group cursor-pointer"
                     >
                       <div>
-                        {/* Square Food Image with Floating Favorite Heart */}
-                        <div className="relative w-full aspect-square sm:aspect-[4/3] rounded-xl overflow-hidden bg-slate-50 border border-[#F2ECE4]/80">
+                        {/* Food Image (Occupies ~60% of card) with Floating Favorite Heart */}
+                        <div className="relative w-full aspect-[4/3] rounded-xl overflow-hidden bg-slate-50 border border-[#F2ECE4]/80">
                           <img
                             src={dishImage}
                             alt={item.name}
@@ -1838,7 +1838,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                           </button>
                         </div>
 
-                        {/* Title & Price */}
+                        {/* Title, Price & Optional One-Line Seller Description */}
                         <div className="mt-2 sm:mt-2.5">
                           <h3 className="font-extrabold text-xs sm:text-base text-[#073653] leading-snug tracking-tight truncate" title={item.name}>
                             {item.name}
@@ -1848,6 +1848,11 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                               {isPriceNotFixed ? 'Price not fixed' : `₹${parseFloat(item.price as string).toFixed(2)}`}
                             </span>
                           </div>
+                          {item.description && item.description.trim() ? (
+                            <p className="text-[10px] sm:text-xs text-[#64839A] leading-tight line-clamp-1 mt-0.5" title={item.description}>
+                              {item.description}
+                            </p>
+                          ) : null}
                         </div>
                       </div>
 
@@ -1859,7 +1864,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                             handleIncrement(item);
                           }}
                           disabled={!item.isAvailable || isPriceNotFixed}
-                          className="mt-2.5 sm:mt-3 w-full py-1.5 sm:py-2 px-2.5 sm:px-3 rounded-xl bg-[#00B894] hover:bg-[#00a382] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer min-h-[30px] sm:min-h-[34px]"
+                          className="mt-2 sm:mt-2.5 w-full py-1.5 sm:py-2 px-2.5 sm:px-3 rounded-xl bg-[#00B894] hover:bg-[#00a382] text-white text-xs font-bold flex items-center justify-center gap-1 shadow-xs transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer min-h-[30px] sm:min-h-[34px]"
                           aria-label={`Add ${item.name} to cart`}
                         >
                           <Plus className="w-3.5 h-3.5" />
@@ -1868,7 +1873,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                       ) : (
                         <div
                           onClick={(e) => e.stopPropagation()}
-                          className="mt-2.5 sm:mt-3 bg-[#F1F6F4] border border-[#BFEBDD]/60 rounded-xl p-0.5 sm:p-1 flex items-center justify-between min-h-[30px] sm:min-h-[34px]"
+                          className="mt-2 sm:mt-2.5 bg-[#F1F6F4] border border-[#BFEBDD]/60 rounded-xl p-0.5 sm:p-1 flex items-center justify-between min-h-[30px] sm:min-h-[34px]"
                         >
                           <button
                             onClick={(e) => {
