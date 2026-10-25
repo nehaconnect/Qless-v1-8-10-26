@@ -1601,13 +1601,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                 )}
               </div>
 
-              {/* Syncing indicator / Error indicator */}
-              {isRefreshingMenu && (
-                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold animate-pulse shrink-0">
-                  <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />
-                  <span>Syncing menu...</span>
-                </div>
-              )}
+              {/* Error indicator */}
               {menuSyncError && (
                 <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-xs font-medium shrink-0">
                   <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
@@ -1693,13 +1687,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                 </div>
               </div>
 
-              {/* Mobile Syncing Indicator */}
-              {isRefreshingMenu && (
-                <div className="flex sm:hidden items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs font-semibold animate-pulse self-start">
-                  <RefreshCw className="w-3 h-3 animate-spin text-emerald-600" />
-                  <span>Syncing menu...</span>
-                </div>
-              )}
+              {/* Mobile Error Indicator */}
               {menuSyncError && (
                 <div className="flex sm:hidden items-center gap-1.5 px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-xs font-medium self-start">
                   <AlertCircle className="w-3 h-3 text-rose-500 shrink-0" />
@@ -1813,7 +1801,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
               /* ========================================================= */
               /* 6. GRID VIEW MATCHING REFERENCES (2 Cols Mobile, 6 Cols Desktop) */
               /* ========================================================= */
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 items-stretch">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2 sm:gap-4 items-stretch">
                 {filteredItems.map(item => {
                   const inCart = cart.find(ci => ci.item.id === item.id);
                   const isPriceNotFixed = item.price === null || item.price === undefined;
@@ -1824,11 +1812,11 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                     <div
                       key={item.id}
                       onClick={() => setSelectedDetailItem(item)}
-                      className="bg-white rounded-[20px] p-3 border border-[#F2ECE4] shadow-[0_2px_8px_rgba(7,54,83,0.04)] hover:shadow-[0_4px_16px_rgba(7,54,83,0.08)] transition-all flex flex-col justify-between h-full relative group cursor-pointer"
+                      className="bg-white rounded-xl sm:rounded-[20px] p-2 sm:p-3 border border-[#F2ECE4] shadow-[0_2px_8px_rgba(7,54,83,0.04)] hover:shadow-[0_4px_16px_rgba(7,54,83,0.08)] transition-all flex flex-col justify-between h-full relative group cursor-pointer"
                     >
                       <div>
                         {/* Food Image with Floating Favorite Heart */}
-                        <div className="relative w-full aspect-square sm:aspect-[4/3] rounded-xl overflow-hidden bg-slate-50 border border-[#F2ECE4]/80">
+                        <div className="relative w-full h-20 sm:h-auto sm:aspect-[4/3] rounded-lg sm:rounded-xl overflow-hidden bg-slate-50 border border-[#F2ECE4]/80">
                           <img
                             src={dishImage}
                             alt={item.name}
@@ -1843,20 +1831,20 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                               e.stopPropagation();
                               toggleFavorite(item.id);
                             }}
-                            className="absolute top-2 right-2 p-1.5 rounded-full bg-white/90 backdrop-blur-sm text-slate-300 hover:text-rose-500 shadow-xs transition cursor-pointer"
+                            className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 p-1 sm:p-1.5 rounded-full bg-white/90 backdrop-blur-sm text-slate-300 hover:text-rose-500 shadow-xs transition cursor-pointer"
                             aria-label="Add to favorites"
                           >
-                            <Heart className={`w-3.5 h-3.5 ${isFav ? 'fill-rose-500 text-rose-500' : 'text-[#64839A]'}`} />
+                            <Heart className={`w-3 h-3 sm:w-3.5 sm:h-3.5 ${isFav ? 'fill-rose-500 text-rose-500' : 'text-[#64839A]'}`} />
                           </button>
                         </div>
 
                         {/* Title & Price */}
-                        <div className="mt-2.5">
-                          <h3 className="font-extrabold text-sm sm:text-base text-[#073653] leading-snug tracking-tight truncate" title={item.name}>
+                        <div className="mt-1.5 sm:mt-2.5">
+                          <h3 className="font-extrabold text-xs sm:text-base text-[#073653] leading-tight sm:leading-snug tracking-tight truncate" title={item.name}>
                             {item.name}
                           </h3>
                           <div className="mt-0.5">
-                            <span className="font-black text-sm sm:text-base text-[#0284C7]">
+                            <span className="font-black text-xs sm:text-base text-[#0284C7]">
                               {isPriceNotFixed ? 'Price not fixed' : `₹${parseFloat(item.price as string).toFixed(2)}`}
                             </span>
                           </div>
@@ -1871,28 +1859,28 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                             handleIncrement(item);
                           }}
                           disabled={!item.isAvailable || isPriceNotFixed}
-                          className="mt-3 w-full py-2 px-3 rounded-xl bg-[#00B894] hover:bg-[#00a382] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer min-h-[34px]"
+                          className="mt-2 sm:mt-3 w-full py-1.5 sm:py-2 px-2 sm:px-3 rounded-lg sm:rounded-xl bg-[#00B894] hover:bg-[#00a382] text-white text-[11px] sm:text-xs font-bold flex items-center justify-center gap-1 sm:gap-1.5 shadow-xs transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer min-h-[28px] sm:min-h-[34px]"
                           aria-label={`Add ${item.name} to cart`}
                         >
-                          <Plus className="w-3.5 h-3.5" />
+                          <Plus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                           <span>Add</span>
                         </button>
                       ) : (
                         <div
                           onClick={(e) => e.stopPropagation()}
-                          className="mt-3 bg-[#F1F6F4] border border-[#BFEBDD]/60 rounded-xl p-1 flex items-center justify-between min-h-[34px]"
+                          className="mt-2 sm:mt-3 bg-[#F1F6F4] border border-[#BFEBDD]/60 rounded-lg sm:rounded-xl p-0.5 sm:p-1 flex items-center justify-between min-h-[28px] sm:min-h-[34px]"
                         >
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
                               handleDecrement(item.id);
                             }}
-                            className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-white text-[#073653] flex items-center justify-center font-bold hover:bg-slate-100 transition text-sm shadow-xs cursor-pointer"
+                            className="w-5 h-5 sm:w-7 sm:h-7 rounded-md sm:rounded-lg bg-white text-[#073653] flex items-center justify-center font-bold hover:bg-slate-100 transition text-xs sm:text-sm shadow-xs cursor-pointer"
                             aria-label="Decrease quantity"
                           >
-                            <Minus className="w-3.5 h-3.5" />
+                            <Minus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                           </button>
-                          <span className="text-xs sm:text-sm font-black text-[#073653] px-1 sm:px-2 font-mono">
+                          <span className="text-[11px] sm:text-sm font-black text-[#073653] px-1 sm:px-2 font-mono">
                             {inCart.quantity}
                           </span>
                           <button
@@ -1901,7 +1889,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                               handleIncrement(item);
                             }}
                             disabled={!item.isAvailable || isPriceNotFixed}
-                            className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-[#00B894] hover:bg-[#00a382] text-white flex items-center justify-center font-bold transition text-sm disabled:opacity-40 disabled:cursor-not-allowed shadow-xs cursor-pointer"
+                            className="w-5 h-5 sm:w-7 sm:h-7 rounded-md sm:rounded-lg bg-[#00B894] hover:bg-[#00a382] text-white flex items-center justify-center font-bold transition text-xs sm:text-sm disabled:opacity-40 disabled:cursor-not-allowed shadow-xs cursor-pointer"
                             aria-label="Increase quantity"
                           >
                             <Plus className="w-3.5 h-3.5" />
@@ -1929,11 +1917,11 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                       <div
                         key={item.id}
                         onClick={() => setSelectedDetailItem(item)}
-                        className="bg-white/95 rounded-2xl border border-[#BFEBDD]/60 p-3 sm:p-3.5 shadow-sm hover:shadow-md transition-all flex items-center justify-between gap-3 cursor-pointer"
+                        className="bg-white/95 rounded-xl sm:rounded-2xl border border-[#BFEBDD]/60 p-2 sm:p-3.5 shadow-sm hover:shadow-md transition-all flex items-center justify-between gap-2.5 sm:gap-3 cursor-pointer"
                       >
                         {/* Left: Square Dish Image + Title & Price */}
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
-                          <div className="w-16 h-16 sm:w-18 sm:h-18 rounded-xl overflow-hidden shrink-0 bg-slate-50 border border-slate-100">
+                        <div className="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
+                          <div className="w-12 h-12 sm:w-18 sm:h-18 rounded-lg sm:rounded-xl overflow-hidden shrink-0 bg-slate-50 border border-slate-100">
                             <img
                               src={dishImage}
                               alt={item.name}
@@ -1946,10 +1934,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                           </div>
 
                           <div className="min-w-0 flex-1">
-                            <h3 className="font-extrabold text-sm sm:text-base text-[#073653] leading-snug truncate">
+                            <h3 className="font-extrabold text-xs sm:text-base text-[#073653] leading-snug truncate">
                               {item.name}
                             </h3>
-                            <p className="text-sm sm:text-base font-black text-[#0284C7] mt-0.5">
+                            <p className="text-xs sm:text-base font-black text-[#0284C7] mt-0.5">
                               {isPriceNotFixed ? 'Unlisted' : `₹${parseFloat(item.price as string).toFixed(2)}`}
                             </p>
                           </div>
@@ -1958,7 +1946,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                         {/* Right: Stepper + Favorite Heart */}
                         <div
                           onClick={(e) => e.stopPropagation()}
-                          className="flex items-center gap-2 sm:gap-3 shrink-0"
+                          className="flex items-center gap-1.5 sm:gap-3 shrink-0"
                         >
                           {!inCart || inCart.quantity === 0 ? (
                             <button
@@ -1967,25 +1955,25 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                                 handleIncrement(item);
                               }}
                               disabled={!item.isAvailable || isPriceNotFixed}
-                              className="py-1.5 px-3 rounded-xl bg-[#00B894] hover:bg-[#00a382] text-white text-xs font-bold flex items-center justify-center gap-1 shadow-xs transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer min-h-[32px]"
+                              className="py-1 sm:py-1.5 px-2.5 sm:px-3 rounded-lg sm:rounded-xl bg-[#00B894] hover:bg-[#00a382] text-white text-[11px] sm:text-xs font-bold flex items-center justify-center gap-1 shadow-xs transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer min-h-[28px] sm:min-h-[32px]"
                               aria-label={`Add ${item.name} to cart`}
                             >
-                              <Plus className="w-3.5 h-3.5" />
+                              <Plus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                               <span>Add</span>
                             </button>
                           ) : (
-                            <div className="flex items-center gap-1 bg-[#F1F6F4] rounded-xl p-1 border border-[#BFEBDD]/60 min-h-[32px]">
+                            <div className="flex items-center gap-0.5 sm:gap-1 bg-[#F1F6F4] rounded-lg sm:rounded-xl p-0.5 sm:p-1 border border-[#BFEBDD]/60 min-h-[28px] sm:min-h-[32px]">
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   handleDecrement(item.id);
                                 }}
-                                className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-white flex items-center justify-center text-[#073653] hover:bg-slate-100 font-bold shadow-xs cursor-pointer"
+                                className="w-5 h-5 sm:w-7 sm:h-7 rounded-md sm:rounded-lg bg-white flex items-center justify-center text-[#073653] hover:bg-slate-100 font-bold shadow-xs cursor-pointer"
                                 aria-label="Decrease quantity"
                               >
                                 <Minus className="w-3 h-3 sm:w-3.5 sm:h-3.5" />
                               </button>
-                              <span className="text-xs sm:text-sm font-black text-[#073653] px-2 min-w-[20px] text-center font-mono">
+                              <span className="text-[11px] sm:text-sm font-black text-[#073653] px-1 sm:px-2 min-w-[18px] sm:min-w-[20px] text-center font-mono">
                                 {inCart.quantity}
                               </span>
                               <button
@@ -1994,7 +1982,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                                   handleIncrement(item);
                                 }}
                                 disabled={!item.isAvailable || isPriceNotFixed}
-                                className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-[#00B894] hover:bg-[#00a382] text-white flex items-center justify-center font-bold transition shadow-xs disabled:opacity-40 cursor-pointer"
+                                className="w-5 h-5 sm:w-7 sm:h-7 rounded-md sm:rounded-lg bg-[#00B894] hover:bg-[#00a382] text-white flex items-center justify-center font-bold transition shadow-xs disabled:opacity-40 cursor-pointer"
                                 aria-label="Increase quantity"
                               >
                                 <Plus className="w-3.5 h-3.5" />
@@ -2007,10 +1995,10 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                               e.stopPropagation();
                               toggleFavorite(item.id);
                             }}
-                            className="p-1.5 text-slate-300 hover:text-rose-500 transition cursor-pointer"
+                            className="p-1 sm:p-1.5 text-slate-300 hover:text-rose-500 transition cursor-pointer"
                             aria-label="Add to favorites"
                           >
-                            <Heart className={`w-4 h-4 sm:w-5 sm:h-5 ${isFav ? 'fill-rose-500 text-rose-500' : 'text-[#64839A]'}`} />
+                            <Heart className={`w-3.5 h-3.5 sm:w-5 sm:h-5 ${isFav ? 'fill-rose-500 text-rose-500' : 'text-[#64839A]'}`} />
                           </button>
                         </div>
                       </div>

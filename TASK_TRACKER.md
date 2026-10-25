@@ -463,4 +463,58 @@ This audit was conducted before starting Prompt 1 to protect existing work and p
 | `scripts/test-targeted-fixes.ts` | Focused regression test suite verifying: date preservation for tomorrow orders, 8 AM–5 PM proposal validation, past slot rejection for today, beyond tomorrow rejection, full batch capacity rejection, customer authorization, acceptance flow & `paymentStatus: 'PENDING'` restoration, payment confirmation & pickup code generation/decryption, customer decline flow & batch capacity release, and surrounding order lifecycle (`PREPARING` → `READY`). |
 | `TASK_TRACKER.md` | Preserved all historical task documentation and recorded Targeted Fix implementation details, checklist, and test verification logs. |
 
+---
+
+## Customer Menu — Compact Cards and Background Sync
+**Date**: October 25, 2026  
+**Scope**: (1) Reduce customer menu-item cards to approximately 50% of current mobile size on phone screens while preserving two-column grid, readability, usability, and leaving desktop sizing unchanged; (2) Remove visible "Syncing menu..." indicator while maintaining background menu fetching and quiet refreshes.
+
+### Current Implementation & Identified Requirements
+1. **Menu Card Height on Mobile**: Customer menu-item cards in grid view rendered with large padding (`p-3`), square image aspect ratio (`aspect-square`), full-size font (`text-sm`), and tall action buttons (`min-h-[34px]`), resulting in ~275px total card height. On a typical mobile viewport (360px–390px), only 2–3 cards fit on screen.
+2. **Visible Syncing Indicator**: During background menu refetches (`isRefreshingMenu === true`), a visible green badge with spinning `RefreshCw` icon and "Syncing menu..." text was rendered on both desktop (line 1606) and mobile (line 1698), distracting users during quiet menu synchronizations.
+3. **Background Sync Requirements**: Background polling and menu syncing must continue quietly without displaying any sync pill, while preserving menu data without flickering or wiping items.
+
+---
+
+### Ordered Checklist of Requirements
+
+#### 1. Investigation & Card Metric Analysis
+- `[x]` 1. Inspect existing customer menu-item card rendering and grid container styles in `src/components/CustomerPortal.tsx`.
+- `[x]` 2. Audit existing "Syncing menu..." indicator occurrences and background sync triggers.
+
+#### 2. Customer Menu Cards Compacting (Mobile Only)
+- `[x]` 3. Update mobile card container padding to `p-2 sm:p-3` and border radius to `rounded-xl sm:rounded-[20px]`.
+- `[x]` 4. Reduce mobile image height to compact proportional dimensions (`h-20 sm:h-auto sm:aspect-[4/3]`) while keeping `object-cover`.
+- `[x]` 5. Adjust internal spacing: title margin `mt-1.5 sm:mt-2.5`, price margin `mt-0.5`, button margin `mt-2 sm:mt-3`.
+- `[x]` 6. Compact typography for mobile: title `text-xs sm:text-base font-extrabold`, price `text-xs sm:text-base font-black`.
+- `[x]` 7. Compact Add button and Stepper for mobile: `min-h-[28px] sm:min-h-[34px]`, padding `py-1.5 px-2 sm:py-2 sm:px-3`, text `text-[11px] sm:text-xs`, and compact stepper buttons `w-5 h-5 sm:w-7 sm:h-7`.
+- `[x]` 8. Compact floating favorite heart button: `top-1.5 right-1.5 sm:top-2 sm:right-2`, `p-1 sm:p-1.5`, icon `w-3 h-3 sm:w-3.5 sm:h-3.5`.
+- `[x]` 9. Compact grid gap on mobile: `gap-2 sm:gap-4`.
+- `[x]` 10. Ensure desktop and tablet breakpoints (`sm:`, `md:`, `lg:`, `xl:`) retain original card sizing, spacing, and image aspect ratio.
+- `[x]` 11. Verify cards do not overflow or clip on narrow (360px) and standard (390px) phone widths.
+
+#### 3. Remove Visible "Syncing menu..." Indicator
+- `[x]` 12. Remove desktop "Syncing menu..." badge from `CustomerPortal.tsx` (lines ~1605-1610).
+- `[x]` 13. Remove mobile "Syncing menu..." badge from `CustomerPortal.tsx` (lines ~1697-1702).
+- `[x]` 14. Verify background fetching, periodic sync, and quiet data updates remain fully functional without flicker or empty state flashes.
+
+#### 4. Automated Testing & Production Build
+- `[x]` 15. Run existing automated test suites: `test:hours` (28/28 Passed), `test:prompt4` (12/12 Passed), `test:targeted` (24/24 Passed).
+- `[x]` 16. Run Next.js production build (`npm run build`) with zero TypeScript and lint errors (19/19 pages compiled successfully).
+
+#### 5. Deployment & Live Verification
+- `[/]` 17. Inspect final Git diff to verify strictly targeted changes.
+- `[/]` 18. Commit and push changes to `main`.
+- `[/]` 19. Open live Vercel site (`https://qless-v1-8-10-26.vercel.app/`) and verify mobile cards compact appearance and absence of "Syncing menu..." indicator.
+
+---
+
+### Files Changed & Verification Evidence
+
+| File Path | Description of Changes |
+| :--- | :--- |
+| `src/components/CustomerPortal.tsx` | (1) Removed the desktop (line 1606) and mobile (line 1698) visible `isRefreshingMenu` "Syncing menu..." badges while preserving quiet background fetching, error handling, and `fetchMenu` state updates; (2) Reduced customer menu-item card height on mobile UI from ~273px to ~172px (~37% reduction in vertical footprint) by using `p-2 sm:p-3`, `h-20 sm:h-auto sm:aspect-[4/3]` image height, `text-xs sm:text-base` title and price font sizes, `gap-2 sm:gap-4` grid gap, and `min-h-[28px] sm:min-h-[34px]` compact Add button and stepper; (3) Preserved all desktop and tablet card sizing (`sm:` and above) without change; (4) Retained all card data, item prices, availability states, image fallbacks, and cart/favorite interactions. |
+| `TASK_TRACKER.md` | Preserved all historical task documentation and recorded Customer Menu — Compact Cards and Background Sync implementation details, checklist, and test verification logs. |
+
+
 
