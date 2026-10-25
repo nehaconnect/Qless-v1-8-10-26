@@ -530,6 +530,45 @@ This audit was conducted before starting Prompt 1 to protect existing work and p
   - Menu cards preserve standard desktop sizing (`aspect-[4/3]`, `p-3`, `text-base` headers/pricing, full-height action buttons).
   - Zero "Syncing menu..." indicator shown on desktop header or menu bar.
 
+---
+
+## Customer Menu — Mobile Menu Card Shape and Spacing
+**Date**: October 25, 2026  
+**Scope**: (1) Adjust customer menu-item cards in mobile view to a balanced, near-square shape with consistent dimensions, rounded corners (`rounded-2xl`), equal padding on all sides (`p-2.5 sm:p-3`), and centered within available screen width; (2) Make food images square (`aspect-square`) and large enough to occupy most of the card, using exact seller-uploaded images without distortion (`object-cover`); (3) Keep actual item name, ₹ price, and “+ Add” button clearly visible inside every card without overlap or clipping; (4) Provide a responsive layout adjusting columns according to screen width (`grid-cols-2 min-[540px]:grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6`) with comfortable gaps (`gap-3 sm:gap-4`) so cards look clean, balanced, and easy to tap; (5) Preserve desktop/tablet styling, theme, colors, and all existing business logic completely unchanged.
+
+### Ordered Checklist of Requirements
+
+#### 1. Inspection & Card Architecture
+- `[x]` 1. Inspect existing customer menu-card component and mobile styles in `src/components/CustomerPortal.tsx`.
+- `[x]` 2. Confirm exact image resolution helper `getItemImage()` prioritizes seller-uploaded images from the database.
+
+#### 2. Mobile Card Shape & Square Food Images
+- `[x]` 3. Update mobile food image to square aspect ratio (`aspect-square sm:aspect-[4/3]`) with `object-cover` so it occupies most of the card without distortion.
+- `[x]` 4. Update card container to a balanced, near-square shape with rounded corners (`rounded-2xl sm:rounded-[20px]`) and equal 10px padding on all sides (`p-2.5 sm:p-3`).
+- `[x]` 5. Center grid within available screen width with responsive columns: `grid-cols-2 min-[540px]:grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6`.
+- `[x]` 6. Apply comfortable gaps (`gap-3 sm:gap-4`) preventing cards from appearing crowded or excessively compact.
+- `[x]` 7. Keep item name, ₹ price, and "+ Add" button clearly visible without text/image overlap or clipping.
+- `[x]` 8. Preserve desktop and tablet sizing (`sm:`, `md:`, `lg:`, `xl:`) completely unchanged.
+
+#### 3. Automated Testing & Production Build
+- `[x]` 9. Run automated test suites: `test:hours` (28/28 Passed), `test:prompt4` (12/12 Passed), `test:targeted` (24/24 Passed).
+- `[x]` 10. Run Next.js production build (`npm run build`) with zero errors (19/19 routes compiled).
+
+#### 4. Deployment & Live Verification
+- `[/]` 11. Review Git diff to ensure only targeted changes are included.
+- `[/]` 12. Commit and push changes to `origin/main`.
+- `[/]` 13. Verify live deployment on Vercel (`https://qless-v1-8-10-26.vercel.app/`).
+
+---
+
+### Files Changed & Verification Evidence
+
+| File Path | Description of Changes |
+| :--- | :--- |
+| `src/components/CustomerPortal.tsx` | (1) Updated food image to `aspect-square sm:aspect-[4/3]` with `object-cover` so food images are square, large enough to occupy most of the card, and undistorted; (2) Adjusted card container to balanced near-square shape with `rounded-2xl sm:rounded-[20px]` and equal padding `p-2.5 sm:p-3`; (3) Responsive grid with comfortable gaps: `grid-cols-2 min-[540px]:grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4 items-stretch justify-center w-full max-w-full mx-auto`; (4) Kept item name, ₹ price, and "+ Add" button (`min-h-[30px] sm:min-h-[34px]`) clearly visible without clipping; (5) Preserved desktop styling completely unchanged. |
+| `TASK_TRACKER.md` | Preserved all historical tasks and appended Customer Menu — Mobile Menu Card Shape and Spacing implementation details, checklist, and verification evidence. |
+
+
 
 
 
