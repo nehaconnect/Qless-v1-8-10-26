@@ -158,6 +158,20 @@ export const notifyMenuUpdate = () => {
   }
 };
 
+// Cross-tab and customer order synchronization notification helper
+export const notifyOrderUpdate = () => {
+  if (typeof window !== 'undefined') {
+    try {
+      const channel = new BroadcastChannel('qless_orders_channel');
+      channel.postMessage({ type: 'ORDER_UPDATED', timestamp: Date.now() });
+      channel.close();
+    } catch {}
+    try {
+      localStorage.setItem('qless_orders_sync_timestamp', Date.now().toString());
+    } catch {}
+  }
+};
+
 const CANTEEN_THUMBNAIL_URL = 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=160&q=80';
 
 interface SellerPortalProps {
@@ -633,6 +647,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to accept order.');
       setPortalSuccess('Order accepted! Customer notified to complete payment.');
+      notifyOrderUpdate();
       await refreshData(false);
     } catch (err: any) {
       setPortalError(err.message);
@@ -660,6 +675,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to reject order.');
       setPortalSuccess('Order request declined.');
+      notifyOrderUpdate();
       setRejectOrderId(null);
       await refreshData(false);
     } catch (err: any) {
@@ -691,6 +707,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to cancel unpaid order.');
       setPortalSuccess('Unpaid order cancelled successfully. Batch capacity released.');
+      notifyOrderUpdate();
       setCancelOrderId(null);
       setCancelCustomReason('');
       await refreshData(false);
@@ -746,6 +763,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to suggest time.');
       setPortalSuccess(`Proposed pickup time (${suggestValidation.displayTime}) sent to customer.`);
+      notifyOrderUpdate();
       setSuggestOrderId(null);
       setSuggestNote('');
       await refreshData(false);
@@ -2592,9 +2610,9 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                         <Clock className="w-3.5 h-3.5 text-primary-blue" />
                                         {exactTime12}
                                       </div>
-                                      {ord.sellerSuggestedTime && ord.timeNegotiationStatus === 'SUGGESTED_BY_SELLER' && (
-                                        <span className="text-[10px] text-amber-700 font-semibold block mt-0.5">
-                                          Proposed: {formatPickupTimeDisplay(ord.sellerSuggestedTime)}
+                                      {ord.sellerSuggestedTime && (ord.timeNegotiationStatus === 'PROPOSED_BY_SELLER' || ord.timeNegotiationStatus === 'SUGGESTED_BY_SELLER' || ord.status === 'TIME_CHANGE_PROPOSED') && (
+                                        <span className="text-[10px] text-purple-700 font-semibold block mt-0.5">
+                                          Slot Change: {formatPickupTimeDisplay(ord.sellerSuggestedTime)}
                                         </span>
                                       )}
                                     </td>
@@ -2629,6 +2647,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                       }`}>
                                         {ord.status === 'CANCELLED' ? 'CANCELLED BY SELLER' :
                                          ord.status === 'REJECTED' ? 'REJECTED BY SELLER' :
+                                         ord.status === 'TIME_CHANGE_PROPOSED' ? 'Slot Change' :
                                          ord.status}
                                       </span>
                                     </td>
@@ -2820,6 +2839,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                               </div>
                                               <span className={`px-2 py-0.5 rounded-lg text-[10px] font-black uppercase ${
                                                 order.status === 'REQUESTED' ? 'bg-amber-100 text-amber-800' :
+                                                order.status === 'TIME_CHANGE_PROPOSED' ? 'bg-purple-100 text-purple-800' :
                                                 order.status === 'ACCEPTED' ? 'bg-blue-100 text-blue-800' :
                                                 order.status === 'CONFIRMED' ? 'bg-emerald-100 text-emerald-800' :
                                                 order.status === 'PREPARING' ? 'bg-purple-100 text-purple-800' :
@@ -2827,7 +2847,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                                 order.status === 'COLLECTED' ? 'bg-slate-100 text-slate-600' :
                                                 'bg-rose-100 text-rose-800'
                                               }`}>
-                                                {order.status}
+                                                {order.status === 'TIME_CHANGE_PROPOSED' ? 'Slot Change' : order.status}
                                               </span>
                                             </div>
 
@@ -2840,11 +2860,11 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                                               </span>
                                             </div>
 
-                                            {order.sellerSuggestedTime && order.timeNegotiationStatus === 'SUGGESTED_BY_SELLER' && (
-                                              <div className="mb-2.5 p-2 bg-amber-50 rounded-xl border border-amber-200/80 flex items-center justify-between text-xs">
-                                                <span className="text-[10px] text-amber-800 font-bold uppercase">Proposed by you:</span>
-                                                <span className="font-black text-amber-900 flex items-center gap-1">
-                                                  <Clock className="w-3.5 h-3.5 text-amber-600" />
+                                            {order.sellerSuggestedTime && (order.timeNegotiationStatus === 'PROPOSED_BY_SELLER' || order.timeNegotiationStatus === 'SUGGESTED_BY_SELLER' || order.status === 'TIME_CHANGE_PROPOSED') && (
+                                              <div className="mb-2.5 p-2 bg-purple-50 rounded-xl border border-purple-200/80 flex items-center justify-between text-xs">
+                                                <span className="text-[10px] text-purple-800 font-bold uppercase">Slot Change:</span>
+                                                <span className="font-black text-purple-900 flex items-center gap-1">
+                                                  <Clock className="w-3.5 h-3.5 text-purple-600" />
                                                   {formatPickupTimeDisplay(order.sellerSuggestedTime)}
                                                 </span>
                                               </div>
@@ -5301,6 +5321,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                 <span className="text-[10px] font-bold text-slate-400 uppercase block">Order Status</span>
                 <span className={`inline-block mt-0.5 px-2.5 py-0.5 rounded-full text-xs font-black uppercase ${
                   selectedOrderDetail.status === 'REQUESTED' ? 'bg-amber-100 text-amber-800' :
+                  selectedOrderDetail.status === 'TIME_CHANGE_PROPOSED' ? 'bg-purple-100 text-purple-800' :
                   selectedOrderDetail.status === 'ACCEPTED' ? 'bg-blue-100 text-blue-800' :
                   selectedOrderDetail.status === 'CONFIRMED' ? 'bg-emerald-100 text-emerald-800' :
                   selectedOrderDetail.status === 'PREPARING' ? 'bg-indigo-100 text-indigo-800' :
@@ -5308,7 +5329,7 @@ export const SellerPortal: React.FC<SellerPortalProps> = ({
                   selectedOrderDetail.status === 'COLLECTED' ? 'bg-slate-100 text-slate-600' :
                   'bg-rose-100 text-rose-800'
                 }`}>
-                  {selectedOrderDetail.status}
+                  {selectedOrderDetail.status === 'TIME_CHANGE_PROPOSED' ? 'Slot Change' : selectedOrderDetail.status}
                 </span>
               </div>
 

@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import {
   getISTDateParts,
   getISTTodayString,
+  getISTTomorrowString,
   toCanonicalPickupTime,
   validatePickupTimeCanonical,
   validateFuturePickupTimeCanonical,
@@ -17,6 +18,7 @@ import {
 export {
   getISTDateParts,
   getISTTodayString,
+  getISTTomorrowString,
   toCanonicalPickupTime,
   validatePickupTimeCanonical,
   validateFuturePickupTimeCanonical,
@@ -928,12 +930,45 @@ export async function sellerSuggestTime(
     throw new Error(`Cannot suggest a new time for order in "${order.status}" status.`);
   }
 
-  const validation = validatePickupTimeCanonical(suggestedTime);
-  if (!validation.valid || !validation.canonical) {
-    throw new Error(validation.error || 'Suggested pickup time must be within canteen operating hours (8:00 AM to 5:00 PM)');
+  // 1. Preserve scheduled order date (especially for tomorrow orders)
+  const originalOrderDateStr = order.exactPickupTime
+    ? getISTTodayString(order.exactPickupTime)
+    : getISTTodayString();
+
+  let targetDateStr = originalOrderDateStr;
+  if (suggestedTime instanceof Date && !isNaN(suggestedTime.getTime())) {
+    targetDateStr = getISTTodayString(suggestedTime);
+  } else if (typeof suggestedTime === 'string') {
+    const trimmed = suggestedTime.trim();
+    if (trimmed.includes('T') || (trimmed.includes('-') && trimmed.split('-').length === 3)) {
+      const parsedD = new Date(trimmed);
+      if (!isNaN(parsedD.getTime())) {
+        targetDateStr = getISTTodayString(parsedD);
+      }
+    }
   }
 
-  const suggestedDate = canonicalTimeToISTDate(validation.canonical);
+  // 2. Validate proposed time against 8:00 AM–5:00 PM operating hours, today/tomorrow limit & past-slot rules
+  const validation = validateFuturePickupTimeCanonical(suggestedTime, new Date(), targetDateStr);
+  if (!validation.valid || !validation.canonical) {
+    throw new Error(validation.error || 'Suggested pickup time must be within canteen operating hours (8:00 AM to 5:00 PM IST)');
+  }
+
+  const suggestedDate = canonicalTimeToISTDate(validation.canonical, targetDateStr);
+
+  // 3. Batch Capacity & Overbooking Check
+  const { startTime, endTime, displayLabel, batchDate } = getBatchWindow(suggestedDate);
+  const targetBatch = await db.query.pickupBatches.findFirst({
+    where: and(
+      eq(pickupBatches.canteenId, order.canteenId),
+      eq(pickupBatches.batchDate, batchDate),
+      eq(pickupBatches.startTime, startTime)
+    )
+  });
+
+  if (targetBatch && targetBatch.reservedCount >= targetBatch.capacity) {
+    throw new Error(`The proposed pickup slot (${displayLabel}) has reached full capacity. Please select another slot.`);
+  }
 
   const [updated] = await db.update(orders)
     .set({
@@ -946,6 +981,9 @@ export async function sellerSuggestTime(
     .where(eq(orders.id, orderId))
     .returning();
 
+  const isTomorrow = targetDateStr === getISTTomorrowString();
+  const datePrefix = isTomorrow ? 'Tomorrow' : 'Today';
+
   // Audit history log
   await db.insert(orderStatusHistory).values({
     orderId,
@@ -953,14 +991,14 @@ export async function sellerSuggestTime(
     toStatus: 'TIME_CHANGE_PROPOSED',
     changedByUserId: sellerUserId,
     actorRole: 'SELLER',
-    reason: `Seller suggested alternative pickup time: ${validation.displayTime}${note ? ` (${note})` : ''}`,
+    reason: `Seller suggested alternative pickup time: ${datePrefix}, ${validation.displayTime}${note ? ` (${note})` : ''}`,
   }).catch(() => {});
 
   await db.insert(notifications).values({
     userId: order.customerId,
     orderId,
     title: 'New Time Suggested',
-    message: `Seller suggested an alternative pickup time: ${validation.displayTime}. Please review and respond.`,
+    message: `Seller suggested an alternative pickup time: ${datePrefix}, ${validation.displayTime}. Please review and respond.`,
     type: 'TIME_CHANGED',
   });
 
@@ -968,6 +1006,7 @@ export async function sellerSuggestTime(
     ...updated,
     canonicalSuggestedTime: validation.canonical,
     displaySuggestedTime: validation.displayTime,
+    suggestedDateStr: targetDateStr,
   };
 }
 
@@ -984,7 +1023,11 @@ export async function customerRespondTimeSuggestion(
     where: and(eq(orders.id, orderId), eq(orders.customerId, customerId))
   });
 
-  if (!order) throw new Error('Order not found');
+  if (!order) throw new Error('Order not found or unauthorized');
+
+  if (order.status !== 'TIME_CHANGE_PROPOSED') {
+    throw new Error(`Cannot respond to time suggestion for order in "${order.status}" status.`);
+  }
 
   const resolvedAction = typeof action === 'boolean'
     ? (action ? 'ACCEPT' : 'DECLINE')
@@ -1017,24 +1060,34 @@ export async function customerRespondTimeSuggestion(
 
     // Transactionally transfer reservation between batches
     await db.transaction(async (tx) => {
-      // Decrement old batch
-      await tx.execute(sql`
-        UPDATE pickup_batches SET reserved_count = GREATEST(0, reserved_count - 1) WHERE id = ${order.batchId}
-      `);
-      // Increment new batch
-      const res = await tx.execute(sql`
-        UPDATE pickup_batches SET reserved_count = reserved_count + 1 WHERE id = ${newBatch.id} AND reserved_count < capacity RETURNING id
-      `);
-      if (res.rows.length === 0) {
-        throw new Error('The suggested batch has reached capacity in the interim.');
+      // Decrement old batch if moving to a different batch
+      if (order.batchId && order.batchId !== newBatch.id) {
+        await tx.execute(sql`
+          UPDATE pickup_batches SET reserved_count = GREATEST(0, reserved_count - 1) WHERE id = ${order.batchId}
+        `);
+        // Increment new batch
+        const res = await tx.execute(sql`
+          UPDATE pickup_batches SET reserved_count = reserved_count + 1 WHERE id = ${newBatch.id} AND reserved_count < capacity RETURNING id
+        `);
+        if (res.rows.length === 0) {
+          throw new Error('The suggested batch has reached capacity in the interim.');
+        }
+      } else if (!order.batchId) {
+        const res = await tx.execute(sql`
+          UPDATE pickup_batches SET reserved_count = reserved_count + 1 WHERE id = ${newBatch.id} AND reserved_count < capacity RETURNING id
+        `);
+        if (res.rows.length === 0) {
+          throw new Error('The suggested batch has reached capacity in the interim.');
+        }
       }
 
+      // Update order exact pickup time and status to ACCEPTED with paymentStatus PENDING
       await tx.update(orders).set({
         batchId: newBatch.id,
         exactPickupTime: order.sellerSuggestedTime!,
         timeNegotiationStatus: 'ACCEPTED_BY_CUSTOMER',
         status: 'ACCEPTED',
-        paymentStatus: 'AWAITING_PAYMENT',
+        paymentStatus: 'PENDING',
         paymentExpiresAt: new Date(Date.now() + 15 * 60 * 1000),
         updatedAt: new Date(),
       }).where(eq(orders.id, orderId));
@@ -1051,12 +1104,13 @@ export async function customerRespondTimeSuggestion(
 
     return { success: true, accepted: true, status: 'ACCEPTED' };
   } else if (resolvedAction === 'COUNTER_PROPOSE' && counterTime) {
-    const validation = validatePickupTimeCanonical(counterTime);
+    const originalDate = order.exactPickupTime ? getISTTodayString(order.exactPickupTime) : getISTTodayString();
+    const validation = validateFuturePickupTimeCanonical(counterTime, new Date(), originalDate);
     if (!validation.valid || !validation.canonical) {
       throw new Error(validation.error || 'Counter pickup time must be within canteen operating hours (8:00 AM to 5:00 PM)');
     }
 
-    const newPickupDate = canonicalTimeToISTDate(validation.canonical);
+    const newPickupDate = canonicalTimeToISTDate(validation.canonical, originalDate);
     const { startTime, endTime, displayLabel, batchDate } = getBatchWindow(newPickupDate);
 
     let [newBatch] = await db.select().from(pickupBatches)
@@ -1080,14 +1134,16 @@ export async function customerRespondTimeSuggestion(
     }
 
     await db.transaction(async (tx) => {
-      await tx.execute(sql`
-        UPDATE pickup_batches SET reserved_count = GREATEST(0, reserved_count - 1) WHERE id = ${order.batchId}
-      `);
-      const res = await tx.execute(sql`
-        UPDATE pickup_batches SET reserved_count = reserved_count + 1 WHERE id = ${newBatch.id} AND reserved_count < capacity RETURNING id
-      `);
-      if (res.rows.length === 0) {
-        throw new Error('The selected batch has reached capacity.');
+      if (order.batchId && order.batchId !== newBatch.id) {
+        await tx.execute(sql`
+          UPDATE pickup_batches SET reserved_count = GREATEST(0, reserved_count - 1) WHERE id = ${order.batchId}
+        `);
+        const res = await tx.execute(sql`
+          UPDATE pickup_batches SET reserved_count = reserved_count + 1 WHERE id = ${newBatch.id} AND reserved_count < capacity RETURNING id
+        `);
+        if (res.rows.length === 0) {
+          throw new Error('The selected batch has reached capacity.');
+        }
       }
 
       await tx.update(orders).set({
@@ -1114,9 +1170,11 @@ export async function customerRespondTimeSuggestion(
   } else {
     // Declined: Cancel order and release capacity
     await db.transaction(async (tx) => {
-      await tx.execute(sql`
-        UPDATE pickup_batches SET reserved_count = GREATEST(0, reserved_count - 1) WHERE id = ${order.batchId}
-      `);
+      if (order.batchId) {
+        await tx.execute(sql`
+          UPDATE pickup_batches SET reserved_count = GREATEST(0, reserved_count - 1) WHERE id = ${order.batchId}
+        `);
+      }
       await tx.update(orders).set({
         timeNegotiationStatus: 'DECLINED_BY_CUSTOMER',
         status: 'CANCELLED',
@@ -1130,7 +1188,7 @@ export async function customerRespondTimeSuggestion(
         toStatus: 'CANCELLED',
         changedByUserId: customerId,
         actorRole: 'CUSTOMER',
-        reason: 'Customer declined time suggestion',
+        reason: 'Customer declined seller proposed pickup time',
       }).catch(() => {});
     });
 
@@ -1168,6 +1226,12 @@ export async function confirmOrderPayment(params: {
   if (order.paymentStatus === 'PAID') {
     throw new Error('Order has already been paid.');
   }
+  if (order.status === 'TIME_CHANGE_PROPOSED') {
+    throw new Error('Please accept the proposed pickup time before completing payment.');
+  }
+  if (order.status === 'REQUESTED') {
+    throw new Error('Order is pending seller approval. Payment can only be completed once accepted.');
+  }
   if (order.status === 'REJECTED' || order.status === 'CANCELLED' || order.status === 'EXPIRED') {
     throw new Error(`Cannot pay for order in ${order.status} status.`);
   }
@@ -1177,7 +1241,14 @@ export async function confirmOrderPayment(params: {
     const freshOrder = await tx.query.orders.findFirst({
       where: and(eq(orders.id, orderId), eq(orders.customerId, customerId))
     });
-    if (!freshOrder || freshOrder.status === 'REJECTED' || freshOrder.status === 'CANCELLED' || freshOrder.status === 'EXPIRED') {
+    if (
+      !freshOrder ||
+      freshOrder.status === 'REJECTED' ||
+      freshOrder.status === 'CANCELLED' ||
+      freshOrder.status === 'EXPIRED' ||
+      freshOrder.status === 'TIME_CHANGE_PROPOSED' ||
+      freshOrder.status === 'REQUESTED'
+    ) {
       throw new Error(`Cannot pay for order in ${freshOrder?.status || 'invalid'} status.`);
     }
     if (freshOrder.paymentStatus === 'PAID') {

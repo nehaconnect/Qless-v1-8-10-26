@@ -137,10 +137,26 @@ export async function PATCH(
         result = await sellerSuggestTime(orderId, authUser.id, suggestedTime, note, sellerCanteen);
         break;
 
-      case 'CUSTOMER_RESPOND_TIME':
-        const responseAction = body.responseAction || (body.accept ? 'ACCEPT' : 'DECLINE');
-        result = await customerRespondTimeSuggestion(orderId, authUser.id, responseAction, body.counterTime);
+      case 'CUSTOMER_RESPOND_TIME': {
+        if (authUser.effectiveRole !== 'CUSTOMER' && authUser.effectiveRole !== 'ADMIN') {
+          return NextResponse.json({ error: 'Forbidden: Customer access required' }, { status: 403 });
+        }
+        const actionValue =
+          body.responseAction ??
+          body.customerTimeResponse ??
+          (typeof body.accept === 'boolean' ? (body.accept ? 'ACCEPT' : 'DECLINE') : undefined);
+
+        if (!actionValue || !['ACCEPT', 'DECLINE', 'COUNTER_PROPOSE'].includes(actionValue)) {
+          return NextResponse.json(
+            { error: 'Invalid or missing response action. Must be ACCEPT, DECLINE, or COUNTER_PROPOSE.' },
+            { status: 400 }
+          );
+        }
+
+        const counterTime = body.counterTime ?? body.exactPickupTime;
+        result = await customerRespondTimeSuggestion(orderId, authUser.id, actionValue as any, counterTime);
         break;
+      }
 
       case 'CUSTOMER_CANCEL':
         if (authUser.effectiveRole !== 'CUSTOMER' && authUser.effectiveRole !== 'ADMIN') {

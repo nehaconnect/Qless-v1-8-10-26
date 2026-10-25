@@ -380,13 +380,23 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
   // Real-time synchronization for seller-to-customer updates (BroadcastChannel, storage events, tab visibility, polling)
   useEffect(() => {
-    let bc: BroadcastChannel | null = null;
+    let bcMenu: BroadcastChannel | null = null;
+    let bcOrders: BroadcastChannel | null = null;
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       try {
-        bc = new BroadcastChannel('qless_menu_channel');
-        bc.onmessage = (event) => {
+        bcMenu = new BroadcastChannel('qless_menu_channel');
+        bcMenu.onmessage = (event) => {
           if (event.data?.type === 'MENU_UPDATED') {
             fetchMenu(false);
+          }
+        };
+      } catch {}
+      try {
+        bcOrders = new BroadcastChannel('qless_orders_channel');
+        bcOrders.onmessage = (event) => {
+          if (event.data?.type === 'ORDER_UPDATED') {
+            fetchOrders(false);
+            fetchNotifications();
           }
         };
       } catch {}
@@ -396,13 +406,21 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
       if (event.key === 'qless_menu_sync_timestamp') {
         fetchMenu(false);
       }
+      if (event.key === 'qless_orders_sync_timestamp') {
+        fetchOrders(false);
+        fetchNotifications();
+      }
     };
     window.addEventListener('storage', handleStorage);
 
-    const handleFocus = () => fetchMenu(false);
+    const handleFocus = () => {
+      fetchMenu(false);
+      fetchOrders(false);
+    };
     const handleVisibility = () => {
       if (document.visibilityState === 'visible') {
         fetchMenu(false);
+        fetchOrders(false);
       }
     };
     window.addEventListener('focus', handleFocus);
@@ -411,11 +429,13 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
     const pollInterval = setInterval(() => {
       if (document.visibilityState === 'visible') {
         fetchMenu(false);
+        fetchOrders(false);
       }
     }, 5000);
 
     return () => {
-      if (bc) bc.close();
+      if (bcMenu) bcMenu.close();
+      if (bcOrders) bcOrders.close();
       window.removeEventListener('storage', handleStorage);
       window.removeEventListener('focus', handleFocus);
       document.removeEventListener('visibilitychange', handleVisibility);
@@ -752,15 +772,17 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'CUSTOMER_RESPOND_TIME',
+          responseAction: action,
           customerTimeResponse: action,
+          counterTime: counterTime || undefined,
           exactPickupTime: counterTime || undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Action failed');
-      setSuccessMsg(action === 'ACCEPT' ? 'Alternative pickup time accepted!' : 'Time adjustment declined.');
+      setSuccessMsg(action === 'ACCEPT' ? 'Alternative pickup slot accepted! Please proceed to payment.' : 'Time adjustment declined.');
       setChooseTimeOrderId(null);
-      fetchOrders(false);
+      await fetchOrders(false);
     } catch (err: any) {
       setErrorMsg(err.message);
     } finally {
@@ -988,6 +1010,31 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
 
   const format12TimeIST = (val?: string | Date | null) => {
     return formatPickupTimeDisplay(val);
+  };
+
+  const formatPickupDateTime = (val?: string | Date | null) => {
+    if (!val) return '--:--';
+    try {
+      const d = typeof val === 'string' ? new Date(val) : val;
+      if (isNaN(d.getTime())) return formatPickupTimeDisplay(val);
+      const { dateStr } = getISTDateParts(d);
+      const todayStr = getISTTodayString();
+      const tomorrowStr = getISTTomorrowString();
+      const timeDisplay = formatPickupTimeDisplay(d);
+      const batch = calculate15MinBatch(d);
+      const slotLabel = batch?.displayLabel || timeDisplay;
+
+      if (dateStr === todayStr) {
+        return `Today, ${slotLabel} (Target: ${timeDisplay} IST)`;
+      } else if (dateStr === tomorrowStr) {
+        return `Tomorrow, ${slotLabel} (Target: ${timeDisplay} IST)`;
+      } else {
+        const parts = getISTDateParts(d);
+        return `${parts.day}/${parts.month}, ${slotLabel} (Target: ${timeDisplay} IST)`;
+      }
+    } catch {
+      return formatPickupTimeDisplay(val);
+    }
   };
 
   const formatDateTimeIST = (dateStr: string | Date) => {
@@ -1329,7 +1376,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                       </div>
                       <div className="sm:hidden space-y-0.5">
                         <p className="truncate text-[#073653]/90 font-semibold">IPCW · Main Canteen</p>
-                        <p className="text-[#0B725C] font-bold">8:00 AM – 5:00 PM IST</p>
+                        <p className="text-[#073653]/80 font-medium text-[10px]">Today 8:00 AM – 5:00 PM IST</p>
                       </div>
                     </div>
                   </div>
@@ -1381,7 +1428,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                 )}
               </button>
 
-              {/* Customer Profile Pill (Requirement 7: remove Student, show username and campus) */}
+              {/* Customer Profile Pill (Requirement 2 & 7: compact on mobile, avatar initials only; full name on desktop) */}
               <div className="relative shrink-0">
                 <button
                   onClick={() => setShowProfileDropdown(!showProfileDropdown)}
@@ -1391,7 +1438,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                   <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-[#DFF3E8] text-[#073653] font-black flex items-center justify-center text-xs border border-[#BFEBDD]/60 shrink-0">
                     {user?.name ? user.name.charAt(0).toUpperCase() : 'S'}
                   </div>
-                  <div className="text-left text-xs pr-1">
+                  <div className="hidden sm:block text-left text-xs pr-1">
                     <p className="font-extrabold text-[#073653] leading-tight truncate max-w-[120px]">
                       {user?.name || (user?.username ? `@${user.username}` : 'Customer')}
                     </p>
@@ -1399,7 +1446,7 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                       {user?.campus || user?.collegeName || 'IPCW, University of Delhi'}
                     </p>
                   </div>
-                  <ChevronDown className="w-3.5 h-3.5 text-[#64839A]" />
+                  <ChevronDown className="hidden sm:block w-3.5 h-3.5 text-[#64839A]" />
                 </button>
 
                 {/* Profile Dropdown */}
@@ -2358,13 +2405,14 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                           </div>
                           <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide border ${
                             order.status === 'REQUESTED' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+                            order.status === 'TIME_CHANGE_PROPOSED' ? 'bg-purple-50 text-purple-800 border-purple-200' :
                             order.status === 'ACCEPTED' ? 'bg-blue-50 text-blue-800 border-blue-200' :
                             order.status === 'CONFIRMED' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
                             order.status === 'PREPARING' ? 'bg-purple-50 text-purple-800 border-purple-200' :
                             order.status === 'READY' ? 'bg-teal-50 text-teal-800 border-teal-200' :
                             'bg-slate-50 text-slate-700 border-slate-200'
                           }`}>
-                            {order.status}
+                            {order.status === 'TIME_CHANGE_PROPOSED' ? 'Slot Change' : order.status}
                           </span>
                         </div>
 
@@ -2448,8 +2496,65 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                           </div>
                         </div>
 
+                        {/* Slot Change Proposal Action for Customer */}
+                        {order.status === 'TIME_CHANGE_PROPOSED' && (
+                          <div className="p-4 rounded-2xl bg-purple-50/90 border border-purple-200/90 space-y-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <div className="w-8 h-8 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center shrink-0">
+                                  <Clock className="w-4 h-4" />
+                                </div>
+                                <div>
+                                  <h4 className="text-xs font-black text-purple-950">Slot Change Proposed</h4>
+                                  <p className="text-[11px] text-purple-700">The canteen has proposed an alternative pickup time for your order.</p>
+                                </div>
+                              </div>
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-200 text-purple-900 uppercase">
+                                Action Needed
+                              </span>
+                            </div>
+
+                            {/* Exact Proposed Time and Date */}
+                            <div className="p-3 bg-white rounded-xl border border-purple-100 flex flex-wrap items-center justify-between gap-2">
+                              <div>
+                                <span className="text-[10px] font-bold text-slate-400 uppercase block">New Proposed Pickup Time:</span>
+                                <span className="text-sm font-black text-purple-950 flex items-center gap-1.5 mt-0.5">
+                                  <Clock className="w-4 h-4 text-purple-600" />
+                                  {formatPickupDateTime(order.sellerSuggestedTime)}
+                                </span>
+                              </div>
+                              {order.rejectionNote && (
+                                <div className="text-left sm:text-right max-w-xs">
+                                  <span className="text-[10px] font-bold text-slate-400 uppercase block">Canteen Note:</span>
+                                  <span className="text-xs font-semibold text-slate-700 italic">"{order.rejectionNote}"</span>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Action Buttons: Accept & Continue to Payment, or Decline */}
+                            <div className="flex items-center justify-end gap-2 pt-1">
+                              <button
+                                onClick={() => handleRespondTime(order.id, 'DECLINE')}
+                                disabled={Boolean(actionLoading[`${order.id}_decline`]) || Boolean(actionLoading[`${order.id}_accept`])}
+                                className="px-3.5 py-2 text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-xl transition cursor-pointer min-h-[40px] flex items-center gap-1.5 disabled:opacity-50"
+                              >
+                                {actionLoading[`${order.id}_decline`] && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                                <span>Decline</span>
+                              </button>
+                              <button
+                                onClick={() => handleRespondTime(order.id, 'ACCEPT')}
+                                disabled={Boolean(actionLoading[`${order.id}_accept`]) || Boolean(actionLoading[`${order.id}_decline`])}
+                                className="px-4 py-2 text-xs font-black text-white bg-[#0B725C] hover:bg-[#085a49] rounded-xl transition shadow-sm cursor-pointer min-h-[40px] flex items-center gap-1.5 disabled:opacity-50"
+                              >
+                                {actionLoading[`${order.id}_accept`] ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                                <span>Accept & Continue to Payment</span>
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
                         {/* Pay Button for Accepted Order */}
-                        {order.status === 'ACCEPTED' && order.paymentStatus === 'PENDING' && (
+                        {order.status === 'ACCEPTED' && ['PENDING', 'AWAITING_PAYMENT'].includes(order.paymentStatus) && (
                           <div className="p-4 rounded-2xl bg-blue-50 border border-blue-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                             <div>
                               <p className="text-xs font-bold text-blue-900">Order Accepted by Kitchen!</p>

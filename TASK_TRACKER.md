@@ -394,4 +394,73 @@ This audit was conducted before starting Prompt 1 to protect existing work and p
 | `package.json` | Added `test:prompt4` test script command. |
 | `TASK_TRACKER.md` | Preserved all historical task documentation and recorded Prompt 4 implementation details, checklist, and test verification logs. |
 
+---
+
+## Targeted Fix — Proposed Pickup Time & Mobile Header
+**Date**: October 25, 2026  
+**Scope**: Targeted bug fixes in seller-proposed pickup time workflow (request/API field mismatch, date preservation for tomorrow orders, capacity/past slot validation, customer proposed-time acceptance & payment restoration) and customer mobile header visual alignment (wider IP Canteen box, compact initials-only mobile profile section).
+
+### Current GitHub Implementation & Confirmed Defects (Pre-Fix Audit)
+1. **API Contract Mismatch**: `CustomerPortal.tsx` (`handleRespondTime`) sends `customerTimeResponse` and `exactPickupTime`, whereas `src/app/api/orders/[id]/route.ts` expected `body.responseAction` and `body.counterTime`. In the API route, `body.responseAction || (body.accept ? 'ACCEPT' : 'DECLINE')` defaulted to `'DECLINE'` whenever `responseAction` was missing, causing customer acceptance clicks to inadvertently decline the order.
+2. **Silent Failure / Missing Validation on Response**: Missing or invalid response actions silently fell back to `'DECLINE'` instead of returning a 400 Bad Request error.
+3. **Date Erasure on Seller Time Suggestion**: In `src/lib/services/order-service.ts` (`sellerSuggestTime`), `canonicalTimeToISTDate(validation.canonical)` was called without specifying `dateStr`. Consequently, if an order was scheduled for Tomorrow, suggesting a new slot converted the date to Today, destroying the scheduled date.
+4. **Missing Validation in Seller Proposal**: `sellerSuggestTime` did not validate proposals against past slots (for today), the tomorrow limit, or existing batch capacity (`reservedCount >= capacity`).
+5. **Customer Payment Blocked After Proposal Acceptance**: `customerRespondTimeSuggestion` set `paymentStatus: 'AWAITING_PAYMENT'`, whereas `CustomerPortal.tsx` strictly required `paymentStatus === 'PENDING'` to render the payment button, leaving the customer trapped without a payment option after accepting a proposed slot.
+6. **Missing Proposed Time UI on Customer Active Order**: Customer active order card had no UI block to render the seller's proposed slot, date, notes, or Accept/Decline action buttons for orders in `TIME_CHANGE_PROPOSED` status.
+7. **Seller UI Proposed Time Display Mismatch**: `SellerPortal.tsx` checked `order.timeNegotiationStatus === 'SUGGESTED_BY_SELLER'` instead of `'PROPOSED_BY_SELLER'`, preventing the proposed time from appearing in both list and card views.
+8. **Seller Interface Text**: Status badge displayed internal string "TIME_CHANGE_PROPOSED" rather than user-friendly "Slot Change".
+9. **Customer Mobile Header Cramping**: On mobile screens (<640px), the customer profile pill rendered full user name and campus subtitle, taking up ~160px width and squeezing the IP Canteen information box and operating hours.
+
+---
+
+### Ordered Checklist of Requirements
+
+#### 1. Investigation & Root Cause Confirmation
+- `[x]` 1. Trace customer response handler in `src/components/CustomerPortal.tsx` and confirm field mismatch (`customerTimeResponse` vs `responseAction`).
+- `[x]` 2. Trace `sellerSuggestTime` in `src/lib/services/order-service.ts` and confirm date loss on tomorrow orders.
+- `[x]` 3. Trace payment display condition in `CustomerPortal.tsx` (`paymentStatus === 'PENDING'`) vs `customerRespondTimeSuggestion` (`paymentStatus: 'AWAITING_PAYMENT'`).
+- `[x]` 4. Verify existing database schema, Better Auth permissions, and payment verification flow to ensure zero breaking changes.
+
+#### 2. Seller-Proposed Pickup Time Workflow (Priority 1)
+- `[x]` 5. Correct customer response contract in `src/app/api/orders/[id]/route.ts` to accept `responseAction` or `customerTimeResponse` without silent defaults.
+- `[x]` 6. Reject missing or invalid customer response actions with explicit HTTP 400 Bad Request error.
+- `[x]` 7. Update `CustomerPortal.tsx` `handleRespondTime` payload to align with API contract.
+- `[x]` 8. Preserve scheduled order date in `sellerSuggestTime` (orders for tomorrow remain tomorrow; explicit date inputs validated).
+- `[x]` 9. Enforce 8:00 AM–5:00 PM operating window, today/tomorrow limit, past slot rules, and batch capacity check on seller proposals in `sellerSuggestTime`.
+- `[x]` 10. Label proposed time status as **"Slot Change"** across seller and customer interfaces instead of "Time Change Proposed".
+- `[x]` 11. Render dedicated Slot Change proposal card on customer active orders showing exact proposed date/time, seller note, and clear Accept / Decline buttons.
+- `[x]` 12. Fix proposed time display condition in `SellerPortal.tsx` (supporting `PROPOSED_BY_SELLER`).
+- `[x]` 13. Ensure customer acceptance updates exact pickup time and batch reservation, sets `paymentStatus: 'PENDING'`, and immediately exposes the payment button.
+- `[x]` 14. Ensure customer decline transitions order to `CANCELLED` and releases batch capacity reservation.
+- `[x]` 15. Real-time / fast refresh sync when seller updates order status so customer sees proposals without a full page refresh.
+
+#### 3. Customer Mobile Header Adjustments (Mobile Breakpoints Only)
+- `[x]` 16. Widen IP Canteen info card container on mobile breakpoints (`min-w-0 flex-1`) so name, open status badge, and hours are un-cramped.
+- `[x]` 17. Compact mobile customer profile section to show only avatar/initials on mobile screens (`hidden sm:block` for text details), freeing horizontal space.
+- `[x]` 18. Preserve all desktop and tablet styling, icons, theme colors, and profile dropdown functionality intact.
+
+#### 4. Automated Testing & Verification
+- `[x]` 19. Run existing automated suites: `test:hours` (28/28 Passed), `test:prompt4` (12/12 Passed).
+- `[x]` 20. Implement focused regression test script `scripts/test-targeted-fixes.ts` verifying field mismatch fix, date preservation, capacity rejection, acceptance & payment flow, and decline handling (24/24 Passed).
+- `[x]` 21. Execute Next.js production build (`npm run build`) with zero lint or compilation errors (19/19 pages compiled successfully).
+
+#### 5. Deployment & Live Verification
+- `[/]` 22. Inspect final Git diff to verify only required files are modified.
+- `[/]` 23. Commit and push verified changes to `origin/main`.
+- `[/]` 24. Verify Vercel deployment of the commit and confirm live page functionality.
+
+---
+
+### Targeted Fix — Files Changed & Verification Evidence
+
+| File Path | Description of Changes |
+| :--- | :--- |
+| `src/app/api/orders/[id]/route.ts` | Aligned `CUSTOMER_RESPOND_TIME` action to accept both `responseAction` and `customerTimeResponse`, alias `counterTime` / `exactPickupTime`, enforce customer/admin authorization check, and return HTTP 400 Bad Request error for missing or invalid actions (removing accidental silent default to `'DECLINE'`). |
+| `src/lib/services/order-service.ts` | (1) Updated `sellerSuggestTime` to preserve scheduled order date (Tomorrow orders remain tomorrow), enforce 8:00 AM–5:00 PM operating hours, validate today/tomorrow limit, reject past slots for today, and reject proposals when batch has reached capacity (`reservedCount >= capacity`); (2) Updated `customerRespondTimeSuggestion` to enforce `order.status === 'TIME_CHANGE_PROPOSED'`, set `paymentStatus: 'PENDING'` (was `'AWAITING_PAYMENT'`), update `exactPickupTime` and batch reservation atomically, and handle `'DECLINE'` cleanly by releasing capacity; (3) Updated `confirmOrderPayment` to block payment if order is in `TIME_CHANGE_PROPOSED` or `REQUESTED`. |
+| `src/components/SellerPortal.tsx` | (1) Added cross-tab/multi-window synchronization broadcast on `qless_orders_channel` and `localStorage` update on seller actions; (2) Replaced "Time Change Proposed" status text with **"Slot Change"** across seller order table, cards, and ticket details; (3) Fixed proposal display condition to check `timeNegotiationStatus === 'PROPOSED_BY_SELLER'`. |
+| `src/components/CustomerPortal.tsx` | (1) Added real-time order sync listener (`qless_orders_channel` and `qless_orders_sync_timestamp`) and 5s polling fallback; (2) Aligned `handleRespondTime` payload to send both `responseAction` and `customerTimeResponse`; (3) Rendered dedicated **Slot Change Proposed** card for `TIME_CHANGE_PROPOSED` orders displaying proposed date/time, canteen note, and Accept/Decline buttons; (4) Added `formatPickupDateTime` to format "Today, ..." / "Tomorrow, ..."; (5) Mobile Header: widened IP Canteen card (`min-w-0 flex-1`), adjusted mobile hours text to "Today 8:00 AM – 5:00 PM IST", and hid text details on mobile (`hidden sm:block`) so top-right profile button shows only avatar initial on mobile, matching Screenshot 1. |
+| `package.json` | Added `test:targeted` script (`tsx scripts/test-targeted-fixes.ts`). |
+| `scripts/test-targeted-fixes.ts` | Focused regression test suite verifying: date preservation for tomorrow orders, 8 AM–5 PM proposal validation, past slot rejection for today, beyond tomorrow rejection, full batch capacity rejection, customer authorization, acceptance flow & `paymentStatus: 'PENDING'` restoration, payment confirmation & pickup code generation/decryption, customer decline flow & batch capacity release, and surrounding order lifecycle (`PREPARING` → `READY`). |
+| `TASK_TRACKER.md` | Preserved all historical task documentation and recorded Targeted Fix implementation details, checklist, and test verification logs. |
+
 
