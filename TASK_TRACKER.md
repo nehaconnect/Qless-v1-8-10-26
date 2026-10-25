@@ -503,9 +503,9 @@ This audit was conducted before starting Prompt 1 to protect existing work and p
 - `[x]` 16. Run Next.js production build (`npm run build`) with zero TypeScript and lint errors (19/19 pages compiled successfully).
 
 #### 5. Deployment & Live Verification
-- `[/]` 17. Inspect final Git diff to verify strictly targeted changes.
-- `[/]` 18. Commit and push changes to `main`.
-- `[/]` 19. Open live Vercel site (`https://qless-v1-8-10-26.vercel.app/`) and verify mobile cards compact appearance and absence of "Syncing menu..." indicator.
+- `[x]` 17. Inspect final Git diff to verify strictly targeted changes.
+- `[x]` 18. Commit and push changes to `main` (Commit `68d1885`).
+- `[x]` 19. Open live Vercel site (`https://qless-v1-8-10-26.vercel.app/`) and verify mobile cards compact appearance and absence of "Syncing menu..." indicator.
 
 ---
 
@@ -515,6 +515,21 @@ This audit was conducted before starting Prompt 1 to protect existing work and p
 | :--- | :--- |
 | `src/components/CustomerPortal.tsx` | (1) Removed the desktop (line 1606) and mobile (line 1698) visible `isRefreshingMenu` "Syncing menu..." badges while preserving quiet background fetching, error handling, and `fetchMenu` state updates; (2) Reduced customer menu-item card height on mobile UI from ~273px to ~172px (~37% reduction in vertical footprint) by using `p-2 sm:p-3`, `h-20 sm:h-auto sm:aspect-[4/3]` image height, `text-xs sm:text-base` title and price font sizes, `gap-2 sm:gap-4` grid gap, and `min-h-[28px] sm:min-h-[34px]` compact Add button and stepper; (3) Preserved all desktop and tablet card sizing (`sm:` and above) without change; (4) Retained all card data, item prices, availability states, image fallbacks, and cart/favorite interactions. |
 | `TASK_TRACKER.md` | Preserved all historical task documentation and recorded Customer Menu — Compact Cards and Background Sync implementation details, checklist, and test verification logs. |
+
+### Live Verification Summary (Vercel Production)
+- **Live Site**: `https://qless-v1-8-10-26.vercel.app/`
+- **Deployment Status**: Commit `68d1885` automatically built and deployed successfully on Vercel.
+- **Mobile Viewport (390x844)**:
+  - Menu cards rendered at ~172px height (reduced from ~273px).
+  - 6 cards visible without scrolling; 2-column layout cleanly preserved with 8px (`gap-2`) grid spacing.
+  - Text, food prices, images, heart icon, and Add buttons remain crisp, legible, and easy to tap.
+  - Zero "Syncing menu..." pill visible anywhere on screen; manual and background refreshes happen quietly.
+- **Narrow Mobile Viewport (360x740)**:
+  - Cards fit comfortably side-by-side with zero horizontal scroll or element clipping.
+- **Desktop Viewport (1440x900)**:
+  - Menu cards preserve standard desktop sizing (`aspect-[4/3]`, `p-3`, `text-base` headers/pricing, full-height action buttons).
+  - Zero "Syncing menu..." indicator shown on desktop header or menu bar.
+
 
 
 
