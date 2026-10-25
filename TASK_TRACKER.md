@@ -631,7 +631,7 @@ This audit was conducted before starting Prompt 1 to protect existing work and p
 
 ### Live Verification Summary (Vercel Production)
 - **Live Site**: `https://qless-v1-8-10-26.vercel.app/`
-- **Deployment Status**: Commit deployed and verified live on Vercel.
+- **Deployment Status**: Commits `38da405` & `e4b3edf` built, deployed, and verified live on Vercel.
 - **Mobile Viewport (390x844)**:
   - Exact 2 cards per row (`grid-cols-2`), centered with equal left, middle, and right margins.
   - Sizing fits 6 items (3 full rows) visible while scrolling down the page.
