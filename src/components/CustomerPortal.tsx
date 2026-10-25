@@ -2883,185 +2883,185 @@ export const CustomerPortal: React.FC<CustomerPortalProps> = ({
                 </div>
               </div>
             )}
+            </div>
+          )}
 
-            {/* Item Detail Preview Modal (Shows seller-added description ONLY when customer selects this item) */}
-            {selectedDetailItem && (
+          {/* Item Detail Preview Modal (Shows seller-added description ONLY when customer selects this item) */}
+          {selectedDetailItem && (
+            <div
+              className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs"
+              onClick={() => setSelectedDetailItem(null)}
+            >
               <div
-                className="fixed inset-0 bg-slate-900/60 z-50 flex items-center justify-center p-4 backdrop-blur-xs"
-                onClick={() => setSelectedDetailItem(null)}
+                className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-100 flex flex-col max-h-[90vh]"
+                onClick={(e) => e.stopPropagation()}
               >
-                <div
-                  className="bg-white rounded-3xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-100 flex flex-col max-h-[90vh]"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  {/* Dish Image */}
-                  <div className="relative w-full h-56 sm:h-64 bg-slate-100">
-                    <img
-                      src={getItemImage(selectedDetailItem)}
-                      alt={selectedDetailItem.name}
-                      className="w-full h-full object-cover"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).src =
-                          'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=600&q=80';
-                      }}
+                {/* Dish Image */}
+                <div className="relative w-full h-56 sm:h-64 bg-slate-100">
+                  <img
+                    src={getItemImage(selectedDetailItem)}
+                    alt={selectedDetailItem.name}
+                    className="w-full h-full object-cover"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src =
+                        'https://images.unsplash.com/photo-1546833999-b9f581a1996d?auto=format&fit=crop&w=600&q=80';
+                    }}
+                  />
+                  <button
+                    onClick={() => setSelectedDetailItem(null)}
+                    className="absolute top-3 right-3 p-2 rounded-full bg-white/90 hover:bg-white text-slate-600 hover:text-slate-900 shadow-md transition cursor-pointer"
+                    aria-label="Close details"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFavorite(selectedDetailItem.id);
+                    }}
+                    className="absolute top-3 left-3 p-2 rounded-full bg-white/90 hover:bg-white shadow-md transition cursor-pointer"
+                    aria-label="Toggle favorite"
+                  >
+                    <Heart
+                      className={`w-4 h-4 ${
+                        favorites.has(selectedDetailItem.id)
+                          ? 'fill-rose-500 text-rose-500'
+                          : 'text-slate-600'
+                      }`}
                     />
-                    <button
-                      onClick={() => setSelectedDetailItem(null)}
-                      className="absolute top-3 right-3 p-2 rounded-full bg-white/90 hover:bg-white text-slate-600 hover:text-slate-900 shadow-md transition cursor-pointer"
-                      aria-label="Close details"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
+                  </button>
 
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleFavorite(selectedDetailItem.id);
-                      }}
-                      className="absolute top-3 left-3 p-2 rounded-full bg-white/90 hover:bg-white shadow-md transition cursor-pointer"
-                      aria-label="Toggle favorite"
-                    >
-                      <Heart
-                        className={`w-4 h-4 ${
-                          favorites.has(selectedDetailItem.id)
-                            ? 'fill-rose-500 text-rose-500'
-                            : 'text-slate-600'
-                        }`}
-                      />
-                    </button>
-
-                    <div className="absolute bottom-3 left-3">
-                      <span className="px-3 py-1 rounded-full bg-slate-900/75 backdrop-blur-md text-white text-[11px] font-bold tracking-wide uppercase">
-                        {categories.find(c => c.id === selectedDetailItem.categoryId)?.name || 'Menu Item'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Body Content */}
-                  <div className="p-5 overflow-y-auto flex-1 space-y-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <span
-                            className={`inline-flex items-center justify-center w-4 h-4 rounded-sm border p-0.5 ${
-                              selectedDetailItem.isVegetarian
-                                ? 'border-emerald-600'
-                                : 'border-rose-600'
-                            }`}
-                            title={selectedDetailItem.isVegetarian ? 'Vegetarian' : 'Non-Vegetarian'}
-                          >
-                            <span
-                              className={`w-2 h-2 rounded-full ${
-                                selectedDetailItem.isVegetarian
-                                  ? 'bg-emerald-600'
-                                  : 'bg-rose-600'
-                              }`}
-                            />
-                          </span>
-                          <span className="text-[11px] font-semibold text-slate-500">
-                            {selectedDetailItem.isVegetarian ? 'Vegetarian' : 'Non-Vegetarian'}
-                          </span>
-                        </div>
-                        <h3 className="text-xl font-black text-[#073653] leading-tight">
-                          {selectedDetailItem.name}
-                        </h3>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <span className="text-xl font-black text-[#0284C7]">
-                          {selectedDetailItem.price === null || selectedDetailItem.price === undefined
-                            ? 'Price not fixed'
-                            : `₹${parseFloat(selectedDetailItem.price as string).toFixed(2)}`}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Actual Seller-added description */}
-                    {selectedDetailItem.description && selectedDetailItem.description.trim() ? (
-                      <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-1">
-                        <div className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wider text-slate-600">
-                          <Sparkles className="w-3.5 h-3.5 text-[#00B894]" />
-                          <span>Description</span>
-                        </div>
-                        <p className="text-xs sm:text-sm text-slate-700 leading-relaxed whitespace-pre-line">
-                          {selectedDetailItem.description}
-                        </p>
-                      </div>
-                    ) : null}
-
-                    {/* Availability */}
-                    <div className="flex items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100">
-                      <span>Availability:</span>
-                      <span
-                        className={`font-bold ${
-                          selectedDetailItem.isAvailable ? 'text-emerald-600' : 'text-rose-600'
-                        }`}
-                      >
-                        {selectedDetailItem.isAvailable ? 'In Stock' : 'Currently Unavailable'}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Modal Footer */}
-                  <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-3">
-                    {(() => {
-                      const inCart = cart.find(ci => ci.item.id === selectedDetailItem.id);
-                      const isPriceNotFixed =
-                        selectedDetailItem.price === null || selectedDetailItem.price === undefined;
-
-                      if (!inCart || inCart.quantity === 0) {
-                        return (
-                          <button
-                            onClick={() => handleIncrement(selectedDetailItem)}
-                            disabled={!selectedDetailItem.isAvailable || isPriceNotFixed}
-                            className="flex-1 py-3 px-4 rounded-2xl bg-[#00B894] hover:bg-[#00a382] text-white font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                          >
-                            <Plus className="w-4 h-4" />
-                            <span>Add to Cart</span>
-                          </button>
-                        );
-                      }
-
-                      return (
-                        <div className="flex-1 flex items-center justify-between bg-white border border-[#BFEBDD] rounded-2xl p-1.5 shadow-xs">
-                          <button
-                            onClick={() => handleDecrement(selectedDetailItem.id)}
-                            className="w-9 h-9 rounded-xl bg-slate-100 text-[#073653] flex items-center justify-center font-bold hover:bg-slate-200 transition cursor-pointer"
-                            aria-label="Decrease quantity"
-                          >
-                            <Minus className="w-4 h-4" />
-                          </button>
-                          <div className="flex flex-col items-center">
-                            <span className="text-sm font-black text-[#073653] font-mono">
-                              {inCart.quantity} in cart
-                            </span>
-                            <span className="text-[11px] font-semibold text-[#0284C7]">
-                              ₹{(parseFloat(selectedDetailItem.price as string) * inCart.quantity).toFixed(2)}
-                            </span>
-                          </div>
-                          <button
-                            onClick={() => handleIncrement(selectedDetailItem)}
-                            disabled={!selectedDetailItem.isAvailable || isPriceNotFixed}
-                            className="w-9 h-9 rounded-xl bg-[#00B894] hover:bg-[#00a382] text-white flex items-center justify-center font-bold transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                            aria-label="Increase quantity"
-                          >
-                            <Plus className="w-4 h-4" />
-                          </button>
-                        </div>
-                      );
-                    })()}
-
-                    <button
-                      onClick={() => setSelectedDetailItem(null)}
-                      className="py-3 px-4 rounded-2xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-sm transition cursor-pointer"
-                    >
-                      Close
-                    </button>
+                  <div className="absolute bottom-3 left-3">
+                    <span className="px-3 py-1 rounded-full bg-slate-900/75 backdrop-blur-md text-white text-[11px] font-bold tracking-wide uppercase">
+                      {categories.find(c => c.id === selectedDetailItem.categoryId)?.name || 'Menu Item'}
+                    </span>
                   </div>
                 </div>
+
+                {/* Body Content */}
+                <div className="p-5 overflow-y-auto flex-1 space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span
+                          className={`inline-flex items-center justify-center w-4 h-4 rounded-sm border p-0.5 ${
+                            selectedDetailItem.isVegetarian
+                              ? 'border-emerald-600'
+                              : 'border-rose-600'
+                          }`}
+                          title={selectedDetailItem.isVegetarian ? 'Vegetarian' : 'Non-Vegetarian'}
+                        >
+                          <span
+                            className={`w-2 h-2 rounded-full ${
+                              selectedDetailItem.isVegetarian
+                                ? 'bg-emerald-600'
+                                : 'bg-rose-600'
+                            }`}
+                          />
+                        </span>
+                        <span className="text-[11px] font-semibold text-slate-500">
+                          {selectedDetailItem.isVegetarian ? 'Vegetarian' : 'Non-Vegetarian'}
+                        </span>
+                      </div>
+                      <h3 className="text-xl font-black text-[#073653] leading-tight">
+                        {selectedDetailItem.name}
+                      </h3>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <span className="text-xl font-black text-[#0284C7]">
+                        {selectedDetailItem.price === null || selectedDetailItem.price === undefined
+                          ? 'Price not fixed'
+                          : `₹${parseFloat(selectedDetailItem.price as string).toFixed(2)}`}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Actual Seller-added description */}
+                  {selectedDetailItem.description && selectedDetailItem.description.trim() ? (
+                    <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 space-y-1">
+                      <div className="flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wider text-slate-600">
+                        <Sparkles className="w-3.5 h-3.5 text-[#00B894]" />
+                        <span>Description</span>
+                      </div>
+                      <p className="text-xs sm:text-sm text-slate-700 leading-relaxed whitespace-pre-line">
+                        {selectedDetailItem.description}
+                      </p>
+                    </div>
+                  ) : null}
+
+                  {/* Availability */}
+                  <div className="flex items-center justify-between text-xs text-slate-500 pt-1 border-t border-slate-100">
+                    <span>Availability:</span>
+                    <span
+                      className={`font-bold ${
+                        selectedDetailItem.isAvailable ? 'text-emerald-600' : 'text-rose-600'
+                      }`}
+                    >
+                      {selectedDetailItem.isAvailable ? 'In Stock' : 'Currently Unavailable'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Modal Footer */}
+                <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-3">
+                  {(() => {
+                    const inCart = cart.find(ci => ci.item.id === selectedDetailItem.id);
+                    const isPriceNotFixed =
+                      selectedDetailItem.price === null || selectedDetailItem.price === undefined;
+
+                    if (!inCart || inCart.quantity === 0) {
+                      return (
+                        <button
+                          onClick={() => handleIncrement(selectedDetailItem)}
+                          disabled={!selectedDetailItem.isAvailable || isPriceNotFixed}
+                          className="flex-1 py-3 px-4 rounded-2xl bg-[#00B894] hover:bg-[#00a382] text-white font-bold text-sm flex items-center justify-center gap-2 shadow-sm transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                        >
+                          <Plus className="w-4 h-4" />
+                          <span>Add to Cart</span>
+                        </button>
+                      );
+                    }
+
+                    return (
+                      <div className="flex-1 flex items-center justify-between bg-white border border-[#BFEBDD] rounded-2xl p-1.5 shadow-xs">
+                        <button
+                          onClick={() => handleDecrement(selectedDetailItem.id)}
+                          className="w-9 h-9 rounded-xl bg-slate-100 text-[#073653] flex items-center justify-center font-bold hover:bg-slate-200 transition cursor-pointer"
+                          aria-label="Decrease quantity"
+                        >
+                          <Minus className="w-4 h-4" />
+                        </button>
+                        <div className="flex flex-col items-center">
+                          <span className="text-sm font-black text-[#073653] font-mono">
+                            {inCart.quantity} in cart
+                          </span>
+                          <span className="text-[11px] font-semibold text-[#0284C7]">
+                            ₹{(parseFloat(selectedDetailItem.price as string) * inCart.quantity).toFixed(2)}
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => handleIncrement(selectedDetailItem)}
+                          disabled={!selectedDetailItem.isAvailable || isPriceNotFixed}
+                          className="w-9 h-9 rounded-xl bg-[#00B894] hover:bg-[#00a382] text-white flex items-center justify-center font-bold transition disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                          aria-label="Increase quantity"
+                        >
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      </div>
+                    );
+                  })()}
+
+                  <button
+                    onClick={() => setSelectedDetailItem(null)}
+                    className="py-3 px-4 rounded-2xl border border-slate-200 hover:bg-slate-100 text-slate-700 font-bold text-sm transition cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
       </div>
     </div>
   );
